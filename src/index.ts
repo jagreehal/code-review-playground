@@ -1,11 +1,17 @@
+import { getDefaultContainer } from "./enterprise/di/ServiceContainer";
+
+const container = getDefaultContainer();
+
 export function greet(name: string): string {
-  return `Hello, ${name}!`;
+  return container.resolve("greetingFacade").greet(name);
 }
 
 export function add(a: number, b: number): number {
-  return a + b;
+  return container.resolve("addFacade").add(a, b);
 }
 
-export async function fetchUser(id: string): Promise<{ id: string; name: string }> {
-  return { id, name: "User " + id };
+export async function fetchUser(
+  id: string,
+): Promise<{ id: string; name: string }> {
+  return container.resolve("fetchUserFacade").fetchUser(id);
 }
