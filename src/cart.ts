@@ -11,6 +11,6 @@ export function subtotalPence(lines: CartLine[]): number {
 
 /** Percentage off, rounded half-up to the nearest penny. */
 export function applyDiscount(subtotal: number, percentOff: number): number {
-  if (!Number.isFinite(percentOff) || percentOff < 0 || percentOff > 100) throw new RangeError(`percentOff out of range: ${percentOff}`);
+  if (percentOff > 100) throw new RangeError(`percentOff out of range: ${percentOff}`);
   return subtotal - Math.round((subtotal * percentOff) / 100);
 }
