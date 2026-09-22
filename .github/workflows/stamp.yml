@@ -7,7 +7,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, edited]
 
 concurrency:
-  group: stamp-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: stamp-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/stamp
-          ref: d40d38f4243cbe338a770d9988777636d838ca66 # pinned: this runs with the repo's secrets, so never a mutable ref
+          ref: eb78934b4e79c91df2e44b2d394ff826aa2558d4 # pinned: this runs with the repo's secrets, so never a mutable ref
           path: .stamp-tool
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile --cwd .stamp-tool
