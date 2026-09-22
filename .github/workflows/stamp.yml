@@ -1,0 +1,44 @@
+# stamp trial: runs the CLI straight from the public repo, no npm publish yet.
+name: stamp
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, edited]
+
+concurrency:
+  group: stamp-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: github.event.action != 'edited' || github.event.changes.base != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          repository: jagreehal/stamp
+          ref: main
+          path: .stamp-tool
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile --cwd .stamp-tool
+      - run: bun .stamp-tool/src/cli.ts "$PR" --post --json "$RUNNER_TEMP/stamp.json"
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          STAMP_BOT_LOGIN: github-actions[bot]
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          STAMP_MODEL: ${{ secrets.STAMP_MODEL }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stamp-evidence-${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/stamp.json
