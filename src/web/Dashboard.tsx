@@ -5,10 +5,12 @@ type Order = { id: string; total: number; placedAt: string };
 
 export default function Dashboard({ userId }: { userId: string }) {
   const [data, setData] = useState<{ name: string; orders: Order[]; revenue: number[] } | null>(null);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setData(null);
+    setError(false);
 
     (async () => {
       try {
@@ -27,8 +29,9 @@ export default function Dashboard({ userId }: { userId: string }) {
           revenueRes.json(),
         ]);
         if (!cancelled) setData({ name: user.name, orders, revenue });
-      } catch {
-        // data stays null; the render check below covers this case
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) setError(true);
       }
     })();
 
@@ -37,10 +40,11 @@ export default function Dashboard({ userId }: { userId: string }) {
     };
   }, [userId]);
 
+  if (error) return <p role="alert">Couldn't load your dashboard.</p>;
   if (!data) return null;
 
   const recent = [...data.orders]
-    .sort((a, b) => Date.parse(b.placedAt) - Date.parse(a.placedAt))
+    .sort((a, b) => (Date.parse(b.placedAt) || 0) - (Date.parse(a.placedAt) || 0))
     .slice(0, 10);
 
   return (
