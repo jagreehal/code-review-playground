@@ -21,7 +21,10 @@ export class FetchUserUseCase {
     const existing = await this.repository.findById(id);
     if (existing) {
       this.telemetry.record(
-        createTelemetryEvent("user.fetch.completed", { idLength: id.length }),
+        createTelemetryEvent("user.fetch.completed", {
+          idLength: id.length,
+          source: "cache",
+        }),
       );
       return existing;
     }
@@ -36,7 +39,10 @@ export class FetchUserUseCase {
     }
 
     this.telemetry.record(
-      createTelemetryEvent("user.fetch.completed", { idLength: id.length }),
+      createTelemetryEvent("user.fetch.completed", {
+        idLength: id.length,
+        source: "created",
+      }),
     );
 
     return saved;

@@ -3,8 +3,6 @@ import {
   type TelemetryPort,
 } from "../common/TelemetryPort";
 import { Result } from "../common/Result";
-import { ArithmeticCommandBus } from "./ArithmeticCommandBus";
-import { EventSourcedAdder } from "./EventSourcedAdder";
 import type { IBinaryOperation } from "./IBinaryOperation";
 import {
   LiteralNumber,
@@ -12,32 +10,12 @@ import {
 } from "./NumberNormalizerVisitor";
 
 export class AddFacade {
-  private readonly bus = new ArithmeticCommandBus();
   private readonly visitor = new NumberNormalizerVisitor();
 
   constructor(
     private readonly operation: IBinaryOperation,
     private readonly telemetry: TelemetryPort,
-  ) {
-    this.bus.register("ADD", (command) => {
-      const sourced = new EventSourcedAdder();
-      const left = new LiteralNumber(command.left).accept(this.visitor);
-      const right = new LiteralNumber(command.right).accept(this.visitor);
-
-      sourced.recordOperand("left", left);
-      sourced.recordOperand("right", right);
-      sourced.requestAddition();
-
-      const eventSourcedSum = sourced.compute();
-      const strategicSum = this.operation.execute({ left, right });
-
-      if (!Object.is(eventSourcedSum, strategicSum)) {
-        throw new Error("Event-sourced sum diverged from strategy sum");
-      }
-
-      return strategicSum;
-    });
-  }
+  ) {}
 
   add(a: number, b: number): number {
     this.telemetry.record(
@@ -46,9 +24,10 @@ export class AddFacade {
       }),
     );
 
-    const result = Result.ok(
-      this.bus.dispatch({ type: "ADD", left: a, right: b }),
-    );
+    const left = new LiteralNumber(a).accept(this.visitor);
+    const right = new LiteralNumber(b).accept(this.visitor);
+
+    const result = Result.ok(this.operation.execute({ left, right }));
 
     this.telemetry.record(
       createTelemetryEvent("add.completed", {

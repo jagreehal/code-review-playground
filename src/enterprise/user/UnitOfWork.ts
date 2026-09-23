@@ -25,9 +25,9 @@ export class UnitOfWork {
 
     const saved: UserRecord[] = [];
     for (const aggregate of this.tracked.values()) {
-      aggregate.pullUncommittedEvents();
       const record = aggregate.toRecord();
       await this.repository.save(record);
+      aggregate.pullUncommittedEvents();
       saved.push(record);
     }
 

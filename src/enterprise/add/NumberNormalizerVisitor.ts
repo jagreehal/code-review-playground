@@ -24,9 +24,6 @@ export class NumberNormalizerVisitor implements NumberVisitor {
   }
 
   visitNormalized(value: number): number {
-    if (Object.is(value, -0)) {
-      return 0;
-    }
     return value;
   }
 }
