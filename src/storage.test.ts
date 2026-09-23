@@ -12,7 +12,7 @@ describe("uploadUrl", () => {
   });
 
   it("rejects names S3 forbids", () => {
-    ["a..b", "a.-b", "192.168.1.1"].forEach(name => {
+    ["a..b", "a.-b", "192.168.1.1", "xn--example", "sthree-example", "amazon-bucket", "example-s3"].forEach(name => {
       expect(() => uploadUrl(name, "key")).toThrow(/invalid bucket/);
     });
   });
