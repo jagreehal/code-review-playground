@@ -1,3 +1,5 @@
+export { hashPassword, verifyPassword, getUserQuery } from "./auth";
+
 export function greet(name: string): string {
   return `Hello, ${name}!`;
 }

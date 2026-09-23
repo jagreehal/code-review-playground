@@ -12,6 +12,7 @@
     "format": "vp fmt"
   },
   "devDependencies": {
+    "@types/node": "^26.6.2",
     "typescript": "^6.0.3",
     "vite-plus": "^0.1.21",
     "vitest": "^4.1.9"
