@@ -22,6 +22,18 @@ describe("verifyPassword", () => {
   it("should reject a wrong password", async () => {
     expect(await verifyPassword("wrong", await hashPassword("secret"))).toBe(false);
   });
+
+  it("should reject a stored hash with a trailing extra field", async () => {
+    const hash = await hashPassword("secret");
+    expect(await verifyPassword("secret", `${hash}:extra`)).toBe(false);
+  });
+
+  it("should reject a stored hash with invalid hex characters", async () => {
+    const hash = await hashPassword("secret");
+    const [salt, hex] = hash.split(":");
+    const corrupted = `z${hex.slice(1)}`;
+    expect(await verifyPassword("secret", `${salt}:${corrupted}`)).toBe(false);
+  });
 });
 
 describe("getUserQuery", () => {

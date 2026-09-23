@@ -15,9 +15,16 @@ export async function hashPassword(password: string): Promise<string> {
   return `${salt}:${(await deriveKey(password, salt)).toString("hex")}`;
 }
 
+const SALT_HEX = /^[0-9a-f]{32}$/;
+const HASH_HEX = /^[0-9a-f]{128}$/;
+
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [salt, hash] = stored.split(":");
-  if (!salt || !hash) {
+  const parts = stored.split(":");
+  if (parts.length !== 2) {
+    return false;
+  }
+  const [salt, hash] = parts;
+  if (!SALT_HEX.test(salt) || !HASH_HEX.test(hash)) {
     return false;
   }
   const actual = await deriveKey(password, salt);
