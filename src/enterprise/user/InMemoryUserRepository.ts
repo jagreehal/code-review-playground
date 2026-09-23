@@ -4,7 +4,8 @@ export class InMemoryUserRepository implements IUserRepository {
   private readonly store = new Map<string, UserRecord>();
 
   async findById(id: string): Promise<UserRecord | null> {
-    return this.store.get(id) ?? null;
+    const user = this.store.get(id);
+    return user ? { ...user } : null;
   }
 
   async save(user: UserRecord): Promise<void> {

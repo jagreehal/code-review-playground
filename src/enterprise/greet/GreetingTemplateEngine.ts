@@ -15,7 +15,7 @@ export class GreetingTemplateEngine {
   render(tokens: TemplateTokenMap): string {
     return Object.entries(tokens).reduce(
       (output, [key, value]) =>
-        output.replaceAll(`{{${key}}}`, value),
+        output.replaceAll(`{{${key}}}`, () => value),
       this.template,
     );
   }

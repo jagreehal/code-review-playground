@@ -31,7 +31,7 @@ export class AddFacade {
       const eventSourcedSum = sourced.compute();
       const strategicSum = this.operation.execute({ left, right });
 
-      if (eventSourcedSum !== strategicSum) {
+      if (!Object.is(eventSourcedSum, strategicSum)) {
         throw new Error("Event-sourced sum diverged from strategy sum");
       }
 

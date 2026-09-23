@@ -2,7 +2,6 @@ import {
   createTelemetryEvent,
   type TelemetryPort,
 } from "../common/TelemetryPort";
-import { Result } from "../common/Result";
 import type { IUserRepository, UserRecord } from "./IUserRepository";
 import { UnitOfWork } from "./UnitOfWork";
 import { UserFactory } from "./UserFactory";
@@ -21,7 +20,10 @@ export class FetchUserUseCase {
 
     const existing = await this.repository.findById(id);
     if (existing) {
-      return Result.unwrap(Result.ok(existing));
+      this.telemetry.record(
+        createTelemetryEvent("user.fetch.completed", { idLength: id.length }),
+      );
+      return existing;
     }
 
     const unitOfWork = new UnitOfWork(this.repository);

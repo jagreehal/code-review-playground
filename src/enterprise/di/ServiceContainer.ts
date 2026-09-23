@@ -4,7 +4,6 @@ import {
 } from "../common/TelemetryPort";
 import { AdditionOperation } from "../add/AdditionOperation";
 import { AddFacade } from "../add/AddFacade";
-import { DefaultGreetingStrategy } from "../greet/DefaultGreetingStrategy";
 import { GreetingStrategyFactory } from "../greet/GreetingStrategyFactory";
 import { GreetingTemplateEngine } from "../greet/GreetingTemplateEngine";
 import { GreetingFacade } from "../greet/GreetingFacade";
@@ -39,9 +38,6 @@ export class ServiceContainer {
       kind: "default",
       templateEngine,
     });
-    // Prove the default concrete path is also constructible directly.
-    void new DefaultGreetingStrategy(templateEngine);
-
     const greetingFacade = new GreetingFacade(strategy, telemetry);
     const addFacade = new AddFacade(new AdditionOperation(), telemetry);
     const repository = new InMemoryUserRepository();

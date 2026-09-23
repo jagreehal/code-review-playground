@@ -7,7 +7,6 @@ import {
   PluginRegistry,
   type Plugin,
 } from "../common/PluginRegistry";
-import { Result } from "../common/Result";
 import { GreetingCommand } from "./GreetingCommand";
 import type { IGreetingStrategy } from "./IGreetingStrategy";
 
@@ -53,12 +52,7 @@ export class GreetingFacade {
     const pipelineContext: GreetingPipelineContext = { command };
 
     this.pipeline.execute(pipelineContext, (ctx) => {
-      const greetingResult = Result.ok(
-        this.strategy.greet(ctx.command.payload.context),
-      );
-      ctx.result = Result.unwrap(
-        Result.map(greetingResult, (value) => value),
-      );
+      ctx.result = this.strategy.greet(ctx.command.payload.context);
     });
 
     this.telemetry.record(
