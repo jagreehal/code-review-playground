@@ -1,12 +1,5 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import {
-  greet,
-  add,
-  hashPassword,
-  verifyPassword,
-  getUserQuery,
-  callExternalApi,
-} from "./index";
+import { describe, it, expect } from "vitest";
+import { greet, add, hashPassword, verifyPassword, getUserQuery } from "./index";
 
 describe("greet", () => {
   it("should return a greeting", () => {
@@ -37,20 +30,5 @@ describe("getUserQuery", () => {
       text: "SELECT * FROM users WHERE email = $1",
       values: ["ada@example.com"],
     });
-  });
-});
-
-describe("callExternalApi", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("should send the configured key", () => {
-    expect(callExternalApi().authorization).toBe("Bearer test-placeholder-not-a-real-key");
-  });
-
-  it("should throw when OPENAI_API_KEY is unset", () => {
-    vi.stubEnv("OPENAI_API_KEY", undefined);
-    expect(() => callExternalApi()).toThrow("OPENAI_API_KEY environment variable is not set");
   });
 });

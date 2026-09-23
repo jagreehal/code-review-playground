@@ -1,9 +1,4 @@
-export {
-  hashPassword,
-  verifyPassword,
-  getUserQuery,
-  callExternalApi,
-} from "./auth";
+export { hashPassword, verifyPassword, getUserQuery } from "./auth";
 
 export function greet(name: string): string {
   return `Hello, ${name}!`;

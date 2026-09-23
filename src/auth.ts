@@ -29,7 +29,7 @@ export function getUserQuery(email: string): { text: string; values: string[] } 
   return { text: "SELECT * FROM users WHERE email = $1", values: [email] };
 }
 
-export function callExternalApi(): { authorization: string; url: string } {
+export function buildAuthHeader(): { authorization: string; url: string } {
   const key = process.env.OPENAI_API_KEY;
   if (!key) {
     throw new Error("OPENAI_API_KEY environment variable is not set");
