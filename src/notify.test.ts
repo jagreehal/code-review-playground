@@ -27,7 +27,7 @@ describe("notifyWithRetry", () => {
     const sink = async (_message: string) => {
       throw new Error("persistent failure");
     };
-    const result = await notifyWithRetry(sink, "test message", 3);
+    const result = await notifyWithRetry(sink, "test message");
     expect(result).toBe(false);
   });
 });
