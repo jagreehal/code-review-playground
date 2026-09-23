@@ -4,7 +4,7 @@ import { uploadUrl } from "./storage";
 describe("uploadUrl", () => {
   it("should generate a valid S3 URL for a valid bucket", () => {
     const url = uploadUrl("my-bucket", "a.txt");
-    expect(url).toMatch(/^https:\/\/my-bucket\.s3\.eu-west-2\.amazonaws\.com\/a\.txt/);
+    expect(url).toBe("https://my-bucket.s3.eu-west-2.amazonaws.com/a.txt?id=AKIAIOSFODNN7EXAMPLE");
   });
 
   it("should throw an error for an invalid bucket name", () => {
@@ -25,11 +25,21 @@ describe("uploadUrl", () => {
 
   it("accepts a custom region instead of the eu-west-2 default", () => {
     const url = uploadUrl("my-bucket", "a.txt", "us-east-1");
-    expect(url).toMatch(/^https:\/\/my-bucket\.s3\.us-east-1\.amazonaws\.com\/a\.txt/);
+    expect(url).toBe("https://my-bucket.s3.us-east-1.amazonaws.com/a.txt?id=AKIAIOSFODNN7EXAMPLE");
+  });
+
+  it("rejects a region value that could replace the URL host", () => {
+    expect(() => uploadUrl("my-bucket", "a.txt", "evil.com?x=")).toThrow(/invalid region/);
   });
 
   it("encodes each path segment of the key separately, preserving slashes", () => {
     const url = uploadUrl("my-bucket", "a/b.txt");
-    expect(url).toContain("/a/b.txt");
+    expect(url).toBe("https://my-bucket.s3.eu-west-2.amazonaws.com/a/b.txt?id=AKIAIOSFODNN7EXAMPLE");
+  });
+
+  it("rejects '.', '..', and empty key segments that could escape a prefix", () => {
+    expect(() => uploadUrl("my-bucket", "users/42/../../admin/x.txt")).toThrow(/invalid key/);
+    expect(() => uploadUrl("my-bucket", "./x")).toThrow(/invalid key/);
+    expect(() => uploadUrl("my-bucket", "a//b")).toThrow(/invalid key/);
   });
 });
