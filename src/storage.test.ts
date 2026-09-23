@@ -8,6 +8,6 @@ describe("uploadUrl", () => {
   });
 
   it("should throw an error for an invalid bucket name", () => {
-    expect(() => uploadUrl("evil.com/x#", "a")).toThrow();
+    expect(() => uploadUrl("evil.com/x#", "a")).toThrow(/invalid bucket/);
   });
 });
