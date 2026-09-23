@@ -31,4 +31,8 @@ describe("applyDiscount", () => {
   it("rejects a non-finite percentage", () => {
     expect(() => applyDiscount(100, Number.NaN)).toThrow(RangeError);
   });
+
+  it("rejects a negative percentage", () => {
+    expect(() => applyDiscount(100, -10)).toThrow(RangeError);
+  });
 });
