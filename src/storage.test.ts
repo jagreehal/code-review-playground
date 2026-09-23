@@ -22,4 +22,14 @@ describe("uploadUrl", () => {
       expect(() => uploadUrl(name, "key")).not.toThrow();
     });
   });
+
+  it("accepts a custom region instead of the eu-west-2 default", () => {
+    const url = uploadUrl("my-bucket", "a.txt", "us-east-1");
+    expect(url).toMatch(/^https:\/\/my-bucket\.s3\.us-east-1\.amazonaws\.com\/a\.txt/);
+  });
+
+  it("encodes each path segment of the key separately, preserving slashes", () => {
+    const url = uploadUrl("my-bucket", "a/b.txt");
+    expect(url).toContain("/a/b.txt");
+  });
 });
