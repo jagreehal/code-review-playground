@@ -21,13 +21,13 @@ describe("add", () => {
 });
 
 describe("verifyPassword", () => {
-  it("should accept a matching password", () => {
-    const hash = hashPassword("secret");
-    expect(verifyPassword("secret", hash)).toBe(true);
+  it("should accept a matching password", async () => {
+    const hash = await hashPassword("secret");
+    expect(await verifyPassword("secret", hash)).toBe(true);
   });
 
-  it("should reject a wrong password", () => {
-    expect(verifyPassword("wrong", hashPassword("secret"))).toBe(false);
+  it("should reject a wrong password", async () => {
+    expect(await verifyPassword("wrong", await hashPassword("secret"))).toBe(false);
   });
 });
 

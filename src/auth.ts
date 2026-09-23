@@ -1,20 +1,26 @@
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 
 // OWASP-recommended scrypt cost parameters. maxmem must be raised to allow
 // N=2**17 (default Node maxmem is 32MB; N=2**17 needs ~128MB).
 const SCRYPT_OPTIONS = { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 } as const;
 
-export function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  return `${salt}:${scryptSync(password, salt, 64, SCRYPT_OPTIONS).toString("hex")}`;
+function deriveKey(password: string, salt: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, 64, SCRYPT_OPTIONS, (err, key) => (err ? reject(err) : resolve(key)));
+  });
 }
 
-export function verifyPassword(password: string, stored: string): boolean {
+export async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString("hex");
+  return `${salt}:${(await deriveKey(password, salt)).toString("hex")}`;
+}
+
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [salt, hash] = stored.split(":");
   if (!salt || !hash) {
     return false;
   }
-  const actual = scryptSync(password, salt, 64, SCRYPT_OPTIONS);
+  const actual = await deriveKey(password, salt);
   const expected = Buffer.from(hash, "hex");
   return expected.length === actual.length && timingSafeEqual(actual, expected);
 }
