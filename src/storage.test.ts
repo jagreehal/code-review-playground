@@ -12,8 +12,14 @@ describe("uploadUrl", () => {
   });
 
   it("rejects names S3 forbids", () => {
-    ["a..b", "a.-b", "192.168.1.1", "xn--example", "sthree-example", "amazon-bucket", "example-s3"].forEach(name => {
+    ["a..b", "a.-b", "192.168.1.1", "xn--example", "sthree-example", "amzn-s3-demo-x", "b-s3alias", "b--ol-s3", "b.mrap", "b--x-s3", "b--table-s3"].forEach(name => {
       expect(() => uploadUrl(name, "key")).toThrow(/invalid bucket/);
+    });
+  });
+
+  it("accepts legal bucket names", () => {
+    ["amazon-bucket", "my-website", "backup-s3"].forEach(name => {
+      expect(() => uploadUrl(name, "key")).not.toThrow();
     });
   });
 });
