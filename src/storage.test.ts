@@ -12,8 +12,8 @@ describe("uploadUrl", () => {
   });
 
   it("rejects names S3 forbids", () => {
-    expect(() => uploadUrl("a..b", "key")).toThrow(/invalid bucket/);
-    expect(() => uploadUrl("a.-b", "key")).toThrow(/invalid bucket/);
-    expect(() => uploadUrl("192.168.1.1", "key")).toThrow(/invalid bucket/);
+    ["a..b", "a.-b", "192.168.1.1"].forEach(name => {
+      expect(() => uploadUrl(name, "key")).toThrow(/invalid bucket/);
+    });
   });
 });
