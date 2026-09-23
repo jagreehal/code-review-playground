@@ -36,6 +36,10 @@ describe("applyDiscount", () => {
     expect(() => applyDiscount(100, -10)).toThrow(RangeError);
   });
 
+  it("rejects a fractional percentage", () => {
+    expect(() => applyDiscount(250, 64.6)).toThrow(RangeError);
+  });
+
   it("rejects a non-integer subtotal", () => {
     expect(() => applyDiscount(100.5, 10)).toThrow(RangeError);
   });
