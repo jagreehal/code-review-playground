@@ -1,5 +1,4 @@
 export {
-  OPENAI_API_KEY,
   hashPassword,
   verifyPassword,
   getUserQuery,

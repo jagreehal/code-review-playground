@@ -5,9 +5,9 @@ import {
   hashPassword,
   verifyPassword,
   getUserQuery,
-  OPENAI_API_KEY,
   callExternalApi,
 } from "./index";
+import { OPENAI_API_KEY } from "./auth";
 
 describe("greet", () => {
   it("should return a greeting", () => {
@@ -21,22 +21,23 @@ describe("add", () => {
   });
 });
 
-describe("hashPassword", () => {
-  it("should return a deterministic hash", () => {
-    expect(hashPassword("secret")).toBe(hashPassword("secret"));
-  });
-});
-
 describe("verifyPassword", () => {
   it("should accept a matching password", () => {
     const hash = hashPassword("secret");
     expect(verifyPassword("secret", hash)).toBe(true);
   });
+
+  it("should reject a wrong password", () => {
+    expect(verifyPassword("wrong", hashPassword("secret"))).toBe(false);
+  });
 });
 
 describe("getUserQuery", () => {
   it("should include the email in the query", () => {
-    expect(getUserQuery("ada@example.com")).toContain("ada@example.com");
+    expect(getUserQuery("ada@example.com")).toEqual({
+      text: "SELECT * FROM users WHERE email = $1",
+      values: ["ada@example.com"],
+    });
   });
 });
 
