@@ -25,6 +25,14 @@ describe("lineTotalPence", () => {
   it("rejects a negative quantity", () => {
     expect(() => lineTotalPence(line(1099, -3))).toThrow(RangeError);
   });
+
+  it("rejects a negative unitPence", () => {
+    expect(() => lineTotalPence(line(-1099, 3))).toThrow(RangeError);
+  });
+
+  it("rejects a fractional quantity", () => {
+    expect(() => lineTotalPence(line(1099, 1.5))).toThrow(RangeError);
+  });
 });
 
 describe("applyDiscount", () => {
