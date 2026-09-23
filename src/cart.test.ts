@@ -21,7 +21,7 @@ describe("lineTotalPence", () => {
 
 describe("applyDiscount", () => {
   it("rounds half-up to the nearest penny", () => {
-    expect(applyDiscount(999, 10)).toBe(899);
+    expect(applyDiscount(10, 5)).toBe(9);
   });
 
   it("rejects a percentage outside 0-100", () => {
@@ -34,5 +34,13 @@ describe("applyDiscount", () => {
 
   it("rejects a negative percentage", () => {
     expect(() => applyDiscount(100, -10)).toThrow(RangeError);
+  });
+
+  it("rejects a non-integer subtotal", () => {
+    expect(() => applyDiscount(100.5, 10)).toThrow(RangeError);
+  });
+
+  it("rejects a negative subtotal", () => {
+    expect(() => applyDiscount(-100, 10)).toThrow(RangeError);
   });
 });
