@@ -32,6 +32,10 @@ describe("uploadUrl", () => {
     expect(() => uploadUrl("my-bucket", "a.txt", "evil.com?x=")).toThrow(/invalid region/);
   });
 
+  it("rejects China partition regions, which need the amazonaws.com.cn suffix this code never emits", () => {
+    expect(() => uploadUrl("my-bucket", "a.txt", "cn-north-1")).toThrow(/invalid region/);
+  });
+
   it("encodes each path segment of the key separately, preserving slashes", () => {
     const url = uploadUrl("my-bucket", "a/b.txt");
     expect(url).toBe("https://my-bucket.s3.eu-west-2.amazonaws.com/a/b.txt?id=AKIAIOSFODNN7EXAMPLE");

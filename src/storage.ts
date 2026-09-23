@@ -6,7 +6,7 @@ const REGION_PATTERN = /^[a-z]{2}(-[a-z]+)+-\d$/;
 
 export function uploadUrl(bucket: string, key: string, region: string = REGION): string {
   if (!BUCKET_PATTERN.test(bucket)) throw new Error(`invalid bucket: ${bucket}`);
-  if (!REGION_PATTERN.test(region)) throw new Error(`invalid region: ${region}`);
+  if (!REGION_PATTERN.test(region) || region.startsWith("cn-")) throw new Error(`invalid region: ${region}`);
   const segments = key.split("/");
   if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
     throw new Error(`invalid key: ${key}`);
