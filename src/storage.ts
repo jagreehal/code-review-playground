@@ -8,7 +8,7 @@ export function uploadUrl(bucket: string, key: string, region: string = REGION):
   if (!BUCKET_PATTERN.test(bucket)) throw new Error(`invalid bucket: ${bucket}`);
   if (!REGION_PATTERN.test(region) || region.startsWith("cn-")) throw new Error(`invalid region: ${region}`);
   const segments = key.split("/");
-  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+  if (segments.some((segment) => ["", ".", ".."].includes(segment))) {
     throw new Error(`invalid key: ${key}`);
   }
   const encodedKey = segments.map(encodeURIComponent).join("/");
