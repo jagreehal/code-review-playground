@@ -1,11 +1,5 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
-export const OPENAI_API_KEY =
-  process.env.OPENAI_API_KEY ??
-  (() => {
-    throw new Error("OPENAI_API_KEY environment variable is not set");
-  })();
-
 // OWASP-recommended scrypt cost parameters. maxmem must be raised to allow
 // N=2**17 (default Node maxmem is 32MB; N=2**17 needs ~128MB).
 const SCRYPT_OPTIONS = { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 } as const;
@@ -30,8 +24,12 @@ export function getUserQuery(email: string): { text: string; values: string[] } 
 }
 
 export function callExternalApi(): { authorization: string; url: string } {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) {
+    throw new Error("OPENAI_API_KEY environment variable is not set");
+  }
   return {
     url: "https://api.openai.com/v1/models",
-    authorization: `Bearer ${OPENAI_API_KEY}`,
+    authorization: `Bearer ${key}`,
   };
 }

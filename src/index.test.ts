@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   greet,
   add,
@@ -7,7 +7,6 @@ import {
   getUserQuery,
   callExternalApi,
 } from "./index";
-import { OPENAI_API_KEY } from "./auth";
 
 describe("greet", () => {
   it("should return a greeting", () => {
@@ -41,15 +40,17 @@ describe("getUserQuery", () => {
   });
 });
 
-describe("OPENAI_API_KEY", () => {
-  it("should be read from configuration, not hardcoded", () => {
-    expect(OPENAI_API_KEY).toBe("test-placeholder-not-a-real-key");
-    expect(OPENAI_API_KEY).not.toMatch(/^sk-/);
-  });
-});
-
 describe("callExternalApi", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("should send the configured key", () => {
-    expect(callExternalApi().authorization).toBe(`Bearer ${OPENAI_API_KEY}`);
+    expect(callExternalApi().authorization).toBe("Bearer test-placeholder-not-a-real-key");
+  });
+
+  it("should throw when OPENAI_API_KEY is unset", () => {
+    vi.stubEnv("OPENAI_API_KEY", undefined);
+    expect(() => callExternalApi()).toThrow("OPENAI_API_KEY environment variable is not set");
   });
 });
