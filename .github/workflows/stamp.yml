@@ -4,10 +4,10 @@ on:
   issue_comment:
     types: [created]
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, edited]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
 
 concurrency:
-  group: stamp-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: stamp-${{ github.event.pull_request.number || github.event.issue.number }}-${{ ((github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null)) || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/stamp') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))) && 'review' || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/stamp
-          ref: d40d38f4243cbe338a770d9988777636d838ca66 # pinned: this runs with the repo's secrets, so never a mutable ref
+          ref: f139139fc82a81cde78d57e80b85f37d3182e110 # pinned: this runs with the repo's secrets, so never a mutable ref
           path: .stamp-tool
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile --cwd .stamp-tool
