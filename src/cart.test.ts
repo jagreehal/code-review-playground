@@ -40,6 +40,11 @@ describe("applyDiscount", () => {
     expect(applyDiscount(10, 5)).toBe(9);
   });
 
+  it("leaves the subtotal unchanged at 0% and zeroes it at 100%", () => {
+    expect(applyDiscount(100, 0)).toBe(100);
+    expect(applyDiscount(100, 100)).toBe(0);
+  });
+
   it("rejects a percentage outside 0-100", () => {
     expect(() => applyDiscount(100, 101)).toThrow(RangeError);
   });
