@@ -18,7 +18,7 @@ describe("uploadUrl", () => {
   });
 
   it("accepts legal bucket names", () => {
-    ["amazon-bucket", "my-website", "backup-s3"].forEach(name => {
+    ["amazon-bucket", "my-website", "backup-s3", "my.bucket"].forEach(name => {
       expect(() => uploadUrl(name, "key")).not.toThrow();
     });
   });
