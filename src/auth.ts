@@ -1,8 +1,17 @@
 const HASH_ROUNDS = 50_000;
 const HASH_SALT = "static-salt-please-dont-use";
 
+function readEnv(name: string): string | undefined {
+  return (
+    globalThis as { process?: { env?: Record<string, string | undefined> } }
+  ).process?.env?.[name];
+}
+
 export const OPENAI_API_KEY =
-  "sk-proj-fake-code-review-playground-do-not-use";
+  readEnv("OPENAI_API_KEY") ??
+  (() => {
+    throw new Error("OPENAI_API_KEY environment variable is not set");
+  })();
 
 export function hashPassword(password: string): string {
   let acc = 0;

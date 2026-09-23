@@ -41,15 +41,14 @@ describe("getUserQuery", () => {
 });
 
 describe("OPENAI_API_KEY", () => {
-  it("should be the playground fake key", () => {
-    expect(OPENAI_API_KEY).toBe(
-      "sk-proj-fake-code-review-playground-do-not-use",
-    );
+  it("should be read from configuration, not hardcoded", () => {
+    expect(OPENAI_API_KEY).toBe("test-placeholder-not-a-real-key");
+    expect(OPENAI_API_KEY).not.toMatch(/^sk-/);
   });
 });
 
 describe("callExternalApi", () => {
-  it("should send the hardcoded key", () => {
+  it("should send the configured key", () => {
     expect(callExternalApi().authorization).toBe(`Bearer ${OPENAI_API_KEY}`);
   });
 });
