@@ -1,0 +1,6 @@
+lenses:
+  react:
+    skill: .agents/skills/react-best-practices
+    applies_to:
+      - "**/*.tsx"
+      - "**/*.jsx"
