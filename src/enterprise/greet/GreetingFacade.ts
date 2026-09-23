@@ -2,8 +2,7 @@ import {
   createTelemetryEvent,
   type TelemetryPort,
 } from "../common/TelemetryPort";
-import { GreetingCommand } from "./GreetingCommand";
-import type { IGreetingStrategy } from "./IGreetingStrategy";
+import type { GreetingContext, IGreetingStrategy } from "./IGreetingStrategy";
 
 export class GreetingFacade {
   constructor(
@@ -12,16 +11,16 @@ export class GreetingFacade {
   ) {}
 
   greet(name: string): string {
-    const command = GreetingCommand.create(name);
+    const context: GreetingContext = { name };
 
     this.telemetry.record(
       createTelemetryEvent("greeting.middleware.before", {
         strategyId: this.strategy.strategyId,
-        nameLength: command.payload.context.name.length,
+        nameLength: context.name.length,
       }),
     );
 
-    const result = this.strategy.greet(command.payload.context);
+    const result = this.strategy.greet(context);
 
     this.telemetry.record(
       createTelemetryEvent("greeting.completed", {

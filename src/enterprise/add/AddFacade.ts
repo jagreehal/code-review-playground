@@ -2,16 +2,9 @@ import {
   createTelemetryEvent,
   type TelemetryPort,
 } from "../common/TelemetryPort";
-import { Result } from "../common/Result";
 import type { IBinaryOperation } from "./IBinaryOperation";
-import {
-  LiteralNumber,
-  NumberNormalizerVisitor,
-} from "./NumberNormalizerVisitor";
 
 export class AddFacade {
-  private readonly visitor = new NumberNormalizerVisitor();
-
   constructor(
     private readonly operation: IBinaryOperation,
     private readonly telemetry: TelemetryPort,
@@ -24,10 +17,7 @@ export class AddFacade {
       }),
     );
 
-    const left = new LiteralNumber(a).accept(this.visitor);
-    const right = new LiteralNumber(b).accept(this.visitor);
-
-    const result = Result.ok(this.operation.execute({ left, right }));
+    const result = this.operation.execute({ left: a, right: b });
 
     this.telemetry.record(
       createTelemetryEvent("add.completed", {
@@ -35,6 +25,6 @@ export class AddFacade {
       }),
     );
 
-    return Result.unwrap(result);
+    return result;
   }
 }
