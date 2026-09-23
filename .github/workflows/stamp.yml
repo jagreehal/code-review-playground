@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/stamp
-          ref: f139139fc82a81cde78d57e80b85f37d3182e110 # pinned: this runs with the repo's secrets, so never a mutable ref
+          ref: ad46bd95fd29edf50d5cc180b2b5194f7d433f57 # pinned: this runs with the repo's secrets, so never a mutable ref
           path: .stamp-tool
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile --cwd .stamp-tool
