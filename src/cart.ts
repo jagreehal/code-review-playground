@@ -2,6 +2,8 @@ export type CartLine = { sku: string; unitPence: number; quantity: number };
 
 /** Line totals in pence, so money never touches floating point. */
 export function lineTotalPence(line: CartLine): number {
+  if (!Number.isInteger(line.unitPence) || line.unitPence < 0) throw new RangeError(`unitPence must be non-negative integer pence: ${line.unitPence}`);
+  if (!Number.isInteger(line.quantity) || line.quantity < 0) throw new RangeError(`quantity must be non-negative integer: ${line.quantity}`);
   return line.unitPence * line.quantity;
 }
 
