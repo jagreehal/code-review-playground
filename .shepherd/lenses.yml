@@ -4,3 +4,7 @@ lenses:
     applies_to:
       - "**/*.tsx"
       - "**/*.jsx"
+  architecture:
+    skill: .shepherd/lenses/architecture
+    applies_to:
+      - src/enterprise/**/*.ts
