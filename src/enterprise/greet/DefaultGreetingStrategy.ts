@@ -1,10 +1,10 @@
-import type {
-  GreetingContext,
-  IGreetingStrategy,
-} from "./IGreetingStrategy";
 import { GreetingTemplateEngine } from "./GreetingTemplateEngine";
 
-export class DefaultGreetingStrategy implements IGreetingStrategy {
+export interface GreetingContext {
+  readonly name: string;
+}
+
+export class DefaultGreetingStrategy {
   readonly strategyId = "default-hello-world-strategy";
 
   constructor(

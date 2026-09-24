@@ -1,13 +1,16 @@
 import {
   createTelemetryEvent,
-  type TelemetryPort,
+  type NoOpTelemetryPort,
 } from "../common/TelemetryPort";
-import type { GreetingContext, IGreetingStrategy } from "./IGreetingStrategy";
+import type {
+  DefaultGreetingStrategy,
+  GreetingContext,
+} from "./DefaultGreetingStrategy";
 
 export class GreetingFacade {
   constructor(
-    private readonly strategy: IGreetingStrategy,
-    private readonly telemetry: TelemetryPort,
+    private readonly strategy: DefaultGreetingStrategy,
+    private readonly telemetry: NoOpTelemetryPort,
   ) {}
 
   greet(name: string): string {

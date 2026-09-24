@@ -4,15 +4,10 @@ export interface TelemetryEvent {
   readonly attributes: Readonly<Record<string, string | number | boolean>>;
 }
 
-export interface TelemetryPort {
-  record(event: TelemetryEvent): void;
-  flush(): Promise<void>;
-}
-
 /**
- * No-op telemetry port so we can swap in OpenTelemetry later without changing call sites.
+ * No-op telemetry sink so we can swap in OpenTelemetry later without changing call sites.
  */
-export class NoOpTelemetryPort implements TelemetryPort {
+export class NoOpTelemetryPort {
   private readonly buffer: TelemetryEvent[] = [];
 
   record(event: TelemetryEvent): void {

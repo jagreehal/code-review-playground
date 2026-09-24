@@ -1,13 +1,13 @@
 import {
   createTelemetryEvent,
-  type TelemetryPort,
+  type NoOpTelemetryPort,
 } from "../common/TelemetryPort";
-import type { IBinaryOperation } from "./IBinaryOperation";
+import type { AdditionOperation } from "./AdditionOperation";
 
 export class AddFacade {
   constructor(
-    private readonly operation: IBinaryOperation,
-    private readonly telemetry: TelemetryPort,
+    private readonly operation: AdditionOperation,
+    private readonly telemetry: NoOpTelemetryPort,
   ) {}
 
   add(a: number, b: number): number {
