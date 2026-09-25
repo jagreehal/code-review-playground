@@ -1,0 +1,49 @@
+import { describe, it, expect } from "vitest";
+import { objectUrl } from "./storage";
+
+describe("objectUrl", () => {
+  it("should generate a valid S3 URL for a valid bucket", () => {
+    const url = objectUrl("my-bucket", "a.txt");
+    expect(url).toBe("https://my-bucket.s3.eu-west-2.amazonaws.com/a.txt");
+  });
+
+  it("should throw an error for an invalid bucket name", () => {
+    expect(() => objectUrl("evil.com/x#", "a")).toThrow(/invalid bucket/);
+  });
+
+  it("rejects names S3 forbids", () => {
+    ["a..b", "a.-b", "192.168.1.1", "xn--example", "sthree-example", "amzn-s3-demo-x", "b-s3alias", "b--ol-s3", "b.mrap", "b--x-s3", "b--table-s3"].forEach(name => {
+      expect(() => objectUrl(name, "key")).toThrow(/invalid bucket/);
+    });
+  });
+
+  it("accepts legal bucket names", () => {
+    ["amazon-bucket", "my-website", "backup-s3", "my.bucket"].forEach(name => {
+      expect(() => objectUrl(name, "key")).not.toThrow();
+    });
+  });
+
+  it("accepts a custom region instead of the eu-west-2 default", () => {
+    const url = objectUrl("my-bucket", "a.txt", "us-east-1");
+    expect(url).toBe("https://my-bucket.s3.us-east-1.amazonaws.com/a.txt");
+  });
+
+  it("rejects a region value that could replace the URL host", () => {
+    expect(() => objectUrl("my-bucket", "a.txt", "evil.com?x=")).toThrow(/invalid region/);
+  });
+
+  it("rejects China partition regions, which need the amazonaws.com.cn suffix this code never emits", () => {
+    expect(() => objectUrl("my-bucket", "a.txt", "cn-north-1")).toThrow(/invalid region/);
+  });
+
+  it("encodes each path segment of the key separately, preserving slashes", () => {
+    const url = objectUrl("my-bucket", "a/b.txt");
+    expect(url).toBe("https://my-bucket.s3.eu-west-2.amazonaws.com/a/b.txt");
+  });
+
+  it("rejects '.', '..', and empty key segments that could escape a prefix", () => {
+    expect(() => objectUrl("my-bucket", "users/42/../../admin/x.txt")).toThrow(/invalid key/);
+    expect(() => objectUrl("my-bucket", "./x")).toThrow(/invalid key/);
+    expect(() => objectUrl("my-bucket", "a//b")).toThrow(/invalid key/);
+  });
+});
