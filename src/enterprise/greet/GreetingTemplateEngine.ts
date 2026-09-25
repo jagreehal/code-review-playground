@@ -13,10 +13,10 @@ export class GreetingTemplateEngine {
   }
 
   render(tokens: TemplateTokenMap): string {
-    return Object.entries(tokens).reduce(
-      (output, [key, value]) =>
-        output.replaceAll(`{{${key}}}`, () => value),
-      this.template,
+    return this.template.replace(/\{\{([^}]+)\}\}/g, (placeholder, key) =>
+      Object.prototype.hasOwnProperty.call(tokens, key)
+        ? tokens[key]
+        : placeholder,
     );
   }
 
