@@ -1,3 +1,9 @@
+export {
+  calculateCheckoutTotal,
+  routeSupportTicket,
+  scoreLoanApplication,
+} from "./complexity";
+
 export function greet(name: string): string {
   return `Hello, ${name}!`;
 }
