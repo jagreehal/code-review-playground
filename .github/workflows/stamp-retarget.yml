@@ -1,0 +1,18 @@
+# stamp: re-review when a PR's base is retargeted. Installed by `bunx @jagreehal/stamp init`.
+# A retarget rewrites the diff without moving the head, so a standing approval would cover a diff
+# nobody reviewed. Description edits also arrive as `edited`; they skip here, under this workflow's
+# own name, so they never stack a skipped "stamp / review" run over the real one.
+name: stamp-retarget
+on:
+  pull_request:
+    types: [edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  retarget:
+    if: github.event.changes.base != null
+    uses: ./.github/workflows/stamp.yml
+    secrets: inherit

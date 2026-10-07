@@ -4,7 +4,8 @@ on:
   issue_comment:
     types: [created]
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
+  workflow_call: # base retargets arrive through stamp-retarget.yml; `edited` here stacked a skipped run on every bot description edit
 
 concurrency:
   group: stamp-${{ github.event.pull_request.number || github.event.issue.number }}-${{ ((github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null)) || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/stamp') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))) && 'review' || github.run_id }}
@@ -31,15 +32,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/stamp
-          ref: ad46bd95fd29edf50d5cc180b2b5194f7d433f57 # pinned: this runs with the repo's secrets, so never a mutable ref
+          ref: 404ebc24d56c86e5afb0099710499b5787f6874c # pinned: this runs with the repo's secrets, so never a mutable ref
           path: .stamp-tool
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile --cwd .stamp-tool
+      # opencode backend: pinned like the engine, since it runs with the repo's secrets
+      - run: curl -fsSL https://opencode.ai/install | bash -s -- --version 2.0.18 && echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
       - run: bun .stamp-tool/src/cli.ts "$PR" --post --json "$RUNNER_TEMP/stamp.json"
         env:
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}
           STAMP_BOT_LOGIN: github-actions[bot]
+          # opencode when its key is set, else the api backend below
+          STAMP_BACKEND: ${{ secrets.OPENCODE_API_KEY != '' && 'opencode' || 'api' }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          STAMP_OPENCODE_MODEL: opencode-go/deepseek-v4-flash
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           STAMP_MODEL: ${{ secrets.STAMP_MODEL }}
