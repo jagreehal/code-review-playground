@@ -32,15 +32,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/stamp
-          ref: 921afe902c57ea8e0a25871f3044bd4989b439d2 # pinned: this runs with the repo's secrets, so never a mutable ref
+          ref: 404ebc24d56c86e5afb0099710499b5787f6874c # pinned: this runs with the repo's secrets, so never a mutable ref
           path: .stamp-tool
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile --cwd .stamp-tool
+      # opencode backend: pinned like the engine, since it runs with the repo's secrets
+      - run: curl -fsSL https://opencode.ai/install | bash -s -- --version 2.0.18 && echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
       - run: bun .stamp-tool/src/cli.ts "$PR" --post --json "$RUNNER_TEMP/stamp.json"
         env:
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}
           STAMP_BOT_LOGIN: github-actions[bot]
+          # opencode when its key is set, else the api backend below
+          STAMP_BACKEND: ${{ secrets.OPENCODE_API_KEY != '' && 'opencode' || 'api' }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          STAMP_OPENCODE_MODEL: opencode-go/deepseek-v4-flash
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           STAMP_MODEL: ${{ secrets.STAMP_MODEL }}

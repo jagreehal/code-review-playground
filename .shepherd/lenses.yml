@@ -8,3 +8,8 @@ lenses:
     skill: .shepherd/lenses/architecture
     applies_to:
       - src/enterprise/**/*.ts
+ladder:
+  - opencode-go/deepseek-v4-flash
+  - opencode-go/glm-5.3
+  - opencode-go/kimi-k3
+  - opencode-go/qwen3.8-max
