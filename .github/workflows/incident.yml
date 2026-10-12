@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/shepherd
-          ref: 12c0fb4618fde92a034b086a2551b5ed2e13aa81 # pinned: runs with the repo's secrets
+          ref: 3dd62b53b0a1d775b84097d4ac0fe3fb3d333f95 # pinned: runs with the repo's secrets
           path: .shepherd-tool
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
