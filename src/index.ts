@@ -8,7 +8,7 @@ export function add(a: number, b: number): number {
 }
 
 export async function fetchUser(id: string): Promise<{ id: string; name: string }> {
-  const key = id.trim();
+  const key = String(id).trim(); // legacy-sync sends numeric ids
 
   return { id: key, name: "User " + key };
 }
