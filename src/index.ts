@@ -7,8 +7,8 @@ export function add(a: number, b: number): number {
   return a + b;
 }
 
-export async function fetchUser(id: string): Promise<{ id: string; name: string }> {
-  const key = id.trim();
+export async function fetchUser(id: string | number): Promise<{ id: string; name: string }> {
+  const key = String(id).trim();
 
   return { id: key, name: "User " + key };
 }

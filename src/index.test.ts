@@ -35,6 +35,11 @@ describe("fetchUser", () => {
   it("ignores whitespace around the id", async () => {
     expect(await fetchUser(" 42 ")).toEqual({ id: "42", name: "User 42" });
   });
+
+  it("accepts a numeric id (legacy-sync payload)", async () => {
+    const user = await fetchUser(1932);
+    expect(user.name).toBe("User 1932");
+  });
 });
 
 describe("clamp", () => {
