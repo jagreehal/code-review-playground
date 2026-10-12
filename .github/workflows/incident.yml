@@ -1,0 +1,88 @@
+# incident: a red run on main, or an error sent in by hand or by an alerting tool, becomes an incident issue,
+# a reproducing test and a fix PR (shepherd's incident skill). The PR then goes through ci, stamp and shepherd.
+#
+# Triggers:
+#   ci fails on a push to main                        -> the run URL is the signal
+#   workflow_dispatch with `error`                     -> paste an error or stack trace
+#   repository_dispatch type `incident`, payload.error -> an alerting tool posts the error
+# workflow_run fires only for this file on the default branch, so a PR cannot change it.
+#
+# Secrets: SHEPHERD_TOKEN (contents, issues, pull requests: write) so the fix PR starts ci and stamp;
+# with github.token the PR opens but no workflow runs on it. OPENCODE_API_KEY, else ANTHROPIC_API_KEY holding an OpenCode key.
+name: incident
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      error:
+        description: Error, stack trace or alert text
+        required: true
+  repository_dispatch:
+    types: [incident]
+
+concurrency:
+  group: incident # one at a time, so a second signal for the same failure dedupes against the first issue
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  incident:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == github.event.repository.default_branch)
+      || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+      - uses: actions/checkout@v4
+        with:
+          repository: jagreehal/shepherd
+          ref: 8a769e90f9857044692417ccc1aef42ac3df4bb9 # pinned: runs with write access and the repo's secrets
+          path: .shepherd-tool
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: |
+          npm ci
+          bun install --frozen-lockfile --cwd .shepherd-tool
+          bun .shepherd-tool/src/cli.ts install
+          rm -rf .shepherd-tool
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 2.0.18 && echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Write the signal
+        env: # through env, never ${{ }} in the script: the error text is untrusted
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          INPUT_ERROR: ${{ github.event.inputs.error }}
+          PAYLOAD_ERROR: ${{ github.event.client_payload.error }}
+        run: |
+          if [ -n "$RUN_URL" ]; then echo "$RUN_URL" > "$RUNNER_TEMP/signal.txt"
+          else printf '%s\n' "${INPUT_ERROR:-$PAYLOAD_ERROR}" > "$RUNNER_TEMP/signal.txt"; fi
+      - name: Incident
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
+          OPENCODE_DISABLE_PROJECT_CONFIG: "1"
+          OPENCODE_DISABLE_AUTOUPDATE: "1"
+          MODEL: ${{ vars.SHEPHERD_MODEL || 'opencode-go/kimi-k3' }}
+        run: |
+          opencode run --auto -m "$MODEL" --title "incident" "Load the incident skill and run it on the signal in $RUNNER_TEMP/signal.txt
+          (a run URL, or an error or alert text).
+          You are running in GitHub Actions on the default branch, already checked out; push with plain git push.
+          Nobody is watching this session: never wait for an answer. Anything you would ask is reported in the final JSON."
