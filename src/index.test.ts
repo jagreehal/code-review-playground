@@ -17,4 +17,8 @@ describe("initials", () => {
   it("takes the first letter of each word", () => {
     expect(initials("ada lovelace")).toBe("AL");
   });
+
+  it("ignores empty segments from repeated spaces", () => {
+    expect(initials("Grace  Hopper")).toBe("GH");
+  });
 });
