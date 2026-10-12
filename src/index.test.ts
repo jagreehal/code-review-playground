@@ -5,6 +5,11 @@ describe("greet", () => {
   it("should return a greeting", () => {
     expect(greet("World")).toBe("Hi, World!");
   });
+
+  it("does not crash on a missing display name (legacy job payload)", () => {
+    expect(greet(undefined)).toBe("Hi, !");
+    expect(greet(null)).toBe("Hi, !");
+  });
 });
 
 describe("add", () => {

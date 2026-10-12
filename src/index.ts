@@ -1,5 +1,5 @@
-export function greet(name: string): string {
-  return `Hi, ${name.trim()}!`;
+export function greet(name: string | null | undefined): string {
+  return `Hi, ${(name ?? "").trim()}!`;
 }
 
 /** Adds two numbers. */
