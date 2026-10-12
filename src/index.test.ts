@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { greet, add, initials, divide, fetchUser } from "./index";
+import { greet, add, initials, divide, fetchUser, clamp } from "./index";
 
 describe("greet", () => {
   it("should return a greeting", () => {
@@ -34,5 +34,13 @@ describe("divide", () => {
 describe("fetchUser", () => {
   it("ignores whitespace around the id", async () => {
     expect(await fetchUser(" 42 ")).toEqual({ id: "42", name: "User 42" });
+  });
+});
+
+describe("clamp", () => {
+  it("keeps a number inside its range", () => {
+    expect(clamp(5, 0, 3)).toBe(3);
+    expect(clamp(-1, 0, 3)).toBe(0);
+    expect(clamp(2, 0, 3)).toBe(2);
   });
 });
