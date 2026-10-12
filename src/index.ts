@@ -1,5 +1,5 @@
 export function greet(name: string): string {
-  return `Hello, ${name}!`;
+  return `Hi, ${name}!`;
 }
 
 export function add(a: number, b: number): number {
