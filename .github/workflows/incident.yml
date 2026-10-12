@@ -56,7 +56,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/shepherd
-          ref: 8a769e90f9857044692417ccc1aef42ac3df4bb9 # pinned: runs with the repo's secrets
+          ref: 3642b9d905077dcc7fe7418957b4b1ede001e83a # pinned: runs with the repo's secrets
           path: .shepherd-tool
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -145,7 +145,7 @@ jobs:
           branch=$(cat ../handoff/branch)
           [[ "$branch" =~ ^incident/[0-9]+$ ]] || { echo "::error::unexpected branch name"; exit 1; }
           git fetch -q ../handoff/fix.bundle "$branch:$branch"
-          git merge-base --is-ancestor "origin/$DEFAULT" "$branch" || { echo "::error::$branch does not build on $DEFAULT"; exit 1; }
+          git merge-base "origin/$DEFAULT" "$branch" >/dev/null || { echo "::error::$branch shares no history with $DEFAULT"; exit 1; } # behind is fine: ci-repair updates it
           # NUL-delimited and rename-free: a quoted or renamed path cannot slip past the match. The diff runs on
           # its own so a failure stops here instead of passing an empty list; an empty change is refused too.
           git diff -z --no-renames --name-only "origin/$DEFAULT...$branch" > ../changed
