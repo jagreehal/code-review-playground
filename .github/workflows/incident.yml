@@ -137,6 +137,7 @@ jobs:
           token: ${{ secrets.SHEPHERD_TOKEN || github.token }}
       - if: steps.handoff.outcome == 'success' && hashFiles('handoff/fix.bundle') != ''
         working-directory: repo
+        shell: bash # -eo pipefail
         env:
           GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
           DEFAULT: ${{ github.event.repository.default_branch }}
@@ -145,8 +146,11 @@ jobs:
           [[ "$branch" =~ ^incident/[0-9]+$ ]] || { echo "::error::unexpected branch name"; exit 1; }
           git fetch -q ../handoff/fix.bundle "$branch:$branch"
           git merge-base --is-ancestor "origin/$DEFAULT" "$branch" || { echo "::error::$branch does not build on $DEFAULT"; exit 1; }
-          # NUL-delimited and rename-free: a quoted or renamed path cannot slip past the match.
-          outside=$(git diff -z --no-renames --name-only "origin/$DEFAULT...$branch" | tr '\0' '\n' | grep -Ev "$INCIDENT_PATHS" || true)
+          # NUL-delimited and rename-free: a quoted or renamed path cannot slip past the match. The diff runs on
+          # its own so a failure stops here instead of passing an empty list; an empty change is refused too.
+          git diff -z --no-renames --name-only "origin/$DEFAULT...$branch" > ../changed
+          [ -s ../changed ] || { echo "::error::$branch changes nothing"; exit 1; }
+          outside=$(tr '\0' '\n' < ../changed | grep -Ev -- "$INCIDENT_PATHS" || [ $? -eq 1 ])
           [ -z "$outside" ] || { echo "::error::the fix changes paths outside $INCIDENT_PATHS; a person should look:"; echo "$outside"; exit 1; }
           git push origin "$branch:refs/heads/$branch"
           gh pr create --base "$DEFAULT" --head "$branch" --title "$(head -c 200 ../handoff/pr-title.txt)" --body-file ../handoff/pr-body.md
