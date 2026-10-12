@@ -1,5 +1,5 @@
-import { greet, initials } from "./index";
+import { initials } from "./index";
 
 export function welcome(name: string): string {
-  return `${greet(name)} (${initials(name)})`;
+  return `Hello, ${name}! (${initials(name)})`;
 }
