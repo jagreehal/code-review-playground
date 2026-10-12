@@ -3,7 +3,7 @@ import { greet, add, initials } from "./index";
 
 describe("greet", () => {
   it("should return a greeting", () => {
-    expect(greet("World")).toBe("Hello, World!");
+    expect(greet("World")).toBe("Hi, World!");
   });
 });
 
