@@ -16,3 +16,7 @@ export function initials(name: string): string {
     .map((part) => part[0].toUpperCase())
     .join("");
 }
+
+export function subtract(a: number, b: number): number {
+  return a - b;
+}
