@@ -35,6 +35,10 @@ describe("fetchUser", () => {
   it("ignores whitespace around the id", async () => {
     expect(await fetchUser(" 42 ")).toEqual({ id: "42", name: "User 42" });
   });
+
+  it("accepts a numeric id from legacy-sync callers", async () => {
+    expect(await fetchUser(1932 as unknown as string)).toEqual({ id: "1932", name: "User 1932" });
+  });
 });
 
 describe("clamp", () => {
