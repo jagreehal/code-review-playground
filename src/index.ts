@@ -11,8 +11,12 @@ export async function fetchUser(id: string): Promise<{ id: string; name: string 
 }
 
 export function initials(name: string): string {
-  return name
-    .split(" ")
-    .map((part) => part[0].toUpperCase())
-    .join("");
+  try {
+    return name
+      .split(" ")
+      .map((part) => part[0].toUpperCase())
+      .join("");
+  } catch {
+    return "";
+  }
 }
