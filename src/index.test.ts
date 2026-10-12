@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { greet, add, initials, divide } from "./index";
+import { greet, add, initials, divide, fetchUser } from "./index";
 
 describe("greet", () => {
   it("should return a greeting", () => {
@@ -28,5 +28,11 @@ describe("divide", () => {
   it("divides and refuses zero", () => {
     expect(divide(6, 3)).toBe(2);
     expect(() => divide(1, 0)).toThrow(RangeError);
+  });
+});
+
+describe("fetchUser", () => {
+  it("ignores whitespace around the id", async () => {
+    expect(await fetchUser(" 42 ")).toEqual({ id: "42", name: "User 42" });
   });
 });

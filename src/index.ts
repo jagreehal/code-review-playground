@@ -8,7 +8,9 @@ export function add(a: number, b: number): number {
 }
 
 export async function fetchUser(id: string): Promise<{ id: string; name: string }> {
-  return { id, name: "User " + id };
+  const key = id.trim();
+
+  return { id: key, name: "User " + key };
 }
 
 export function initials(name: string): string {
