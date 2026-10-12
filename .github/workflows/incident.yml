@@ -28,10 +28,6 @@ on:
   repository_dispatch:
     types: [incident]
 
-concurrency:
-  group: incident # one at a time, so a second signal for the same failure dedupes against the first issue
-  cancel-in-progress: false
-
 permissions: {}
 
 jobs:
@@ -43,6 +39,11 @@ jobs:
       || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # On the job, not the workflow: every green ci run starts this workflow only to skip, and at workflow level
+    # that skip took the one pending slot from a real incident. One at a time, so a repeat signal dedupes.
+    concurrency:
+      group: incident
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
