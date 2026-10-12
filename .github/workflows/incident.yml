@@ -86,6 +86,7 @@ jobs:
           if [ -n "$RUN_URL" ]; then echo "$RUN_URL" > "$RUNNER_TEMP/signal.txt"
           else printf '%s\n' "${INPUT_ERROR:-$PAYLOAD_ERROR}" > "$RUNNER_TEMP/signal.txt"; fi
       - name: Incident
+        timeout-minutes: 20 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
           GH_TOKEN: ${{ github.token }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
