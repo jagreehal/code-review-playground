@@ -10,7 +10,8 @@
 # The signal is untrusted text (alert payloads carry user input), so the agent's job can read the repo and
 # file issues, nothing more: no contents write, no credential in its checkout. It hands its commit over as a
 # git bundle; the `open` job, which runs no model, pushes only an `incident/<n>` branch that builds on main
-# and leaves .github/ alone, then opens the PR. The agent still holds the model key.
+# and changes nothing outside INCIDENT_PATHS (no workflows, manifests, lockfiles or config: CI on the PR
+# installs and runs them), then opens the PR. The agent still holds the model key.
 #
 # Secrets: SHEPHERD_TOKEN (contents, pull requests: write) for `open`, so the fix PR starts ci and stamp;
 # with github.token the PR opens but no workflow runs on it. OPENCODE_API_KEY, else ANTHROPIC_API_KEY holding an OpenCode key.
@@ -115,6 +116,8 @@ jobs:
   open:
     needs: investigate
     runs-on: ubuntu-latest
+    env:
+      INCIDENT_PATHS: ${{ vars.INCIDENT_PATHS || '^src/' }} # extended regex every changed path must match
     permissions:
       contents: write
       pull-requests: write
@@ -142,6 +145,8 @@ jobs:
           [[ "$branch" =~ ^incident/[0-9]+$ ]] || { echo "::error::unexpected branch name"; exit 1; }
           git fetch -q ../handoff/fix.bundle "$branch:$branch"
           git merge-base --is-ancestor "origin/$DEFAULT" "$branch" || { echo "::error::$branch does not build on $DEFAULT"; exit 1; }
-          if git diff --name-only "origin/$DEFAULT...$branch" | grep -q '^\.github/'; then echo "::error::the fix touches .github/; a person should look"; exit 1; fi
+          # NUL-delimited and rename-free: a quoted or renamed path cannot slip past the match.
+          outside=$(git diff -z --no-renames --name-only "origin/$DEFAULT...$branch" | tr '\0' '\n' | grep -Ev "$INCIDENT_PATHS" || true)
+          [ -z "$outside" ] || { echo "::error::the fix changes paths outside $INCIDENT_PATHS; a person should look:"; echo "$outside"; exit 1; }
           git push origin "$branch:refs/heads/$branch"
           gh pr create --base "$DEFAULT" --head "$branch" --title "$(head -c 200 ../handoff/pr-title.txt)" --body-file ../handoff/pr-body.md
