@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { greet, add } from "./index";
+import { greet, add, initials } from "./index";
 
 describe("greet", () => {
   it("should return a greeting", () => {
@@ -10,5 +10,11 @@ describe("greet", () => {
 describe("add", () => {
   it("should add two numbers", () => {
     expect(add(2, 3)).toBe(5);
+  });
+});
+
+describe("initials", () => {
+  it("takes the first letter of each word", () => {
+    expect(initials("ada lovelace")).toBe("AL");
   });
 });
