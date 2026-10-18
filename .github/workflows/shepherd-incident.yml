@@ -67,7 +67,7 @@ jobs:
       - shell: bash # -eo pipefail: a failed download fails here, not three steps later
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#9f42bb947c33cbbc9594a31263b03fafff796d1d" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#33b299fe13d6984bd40b450dc3ac9f9488dface1" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install
