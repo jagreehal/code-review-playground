@@ -5,20 +5,21 @@
 #
 # The model reads text anyone can write (comments, review threads, bot output), so it never holds a write
 # credential. `gate` (no model) decides whether to run. `iterate` runs the model with github.token, which can
-# comment, resolve threads and read, never push; its commits leave as a git bundle. `publish` runs no model: it pushes the bundle to the PR's own branch only
-# as a fast-forward that touches nothing matching SHEPHERD_PUSH_DENY, then sets the status and notifies.
+# comment, resolve threads and read, never push; its commits leave as a git bundle. `publish` runs no model:
+# it pushes the bundle to the PR's own branch only as a fast-forward that touches nothing matching
+# SHEPHERD_PUSH_DENY, then sets the status and notifies.
 #
 # Secrets:
-#   SHEPHERD_TOKEN    fine-grained PAT: contents, pull requests and commit statuses (read/write). Only `gate` and `publish`
-#                     see it. Pushes made with github.token start no workflows, so the loop would stall.
+#   SHEPHERD_TOKEN    fine-grained PAT: contents, pull requests and commit statuses (read/write). Only
+#                     `gate` and `publish` see it. Pushes made with github.token start no workflows, so the loop would stall.
 #   OPENCODE_API_KEY  the models (any provider: set the matching key and SHEPHERD_MODEL).
 #   SHEPHERD_NOTIFY_WEBHOOK  optional: Slack Incoming Webhook or any JSON endpoint, told when a PR needs
-#                     you or is ready to merge.
+#                     you, is ready to merge, or the iteration stopped on an error.
 # Variables:
 #   SHEPHERD_MODEL    provider/model for opencode; empty = opencode-go/kimi-k3.
 #   SHEPHERD_LABEL    optional: shepherd only PRs carrying this label. Whatever opens PRs (a person, Claude
 #                     Code, Codex, another agent) hands one over by adding it.
-#   SHEPHERD_NOTIFY_ON  optional: states that notify, e.g. "failure"; empty = success,failure.
+#   SHEPHERD_NOTIFY_ON  optional: states that notify, e.g. "failure"; empty = success,failure,error.
 #   SHEPHERD_PUSH_DENY  optional: extended regex of paths a handed-off fix may not touch; empty = workflows,
 #                     git and editor hooks, package manager config, manifests and lockfiles.
 #
@@ -45,8 +46,9 @@ permissions:
   contents: read
 
 # One run per PR at a time, gate to publish, so a run's statuses never interleave with another's. The condition
-# is the gate's `if` verbatim (a test keeps them in step): a run the gate would skip gets a group of its own, so
-# it never takes the PR's one pending slot from a real iteration.
+# is the gate's `if` verbatim (a test keeps them in step): a run that event alone rules out gets a group of its
+# own. A run the gate step skips after reading GitHub (finished head, label scope, incident branch) still queues
+# in the PR's group, where GitHub keeps one waiting run, so a later event can take a queued `/shepherd`'s place.
 concurrency:
   group: >-
     ${{ github.event_name == 'schedule' && 'shepherd-sweep'
@@ -139,9 +141,11 @@ jobs:
           # Only PRs by people who could push this code themselves: shepherd runs their checks with these secrets.
           perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$author/permission" --jq .permission 2>/dev/null || echo none)
           case "$perm" in admin|maintain|write) ;; *) skip "author $author has $perm access" ;; esac
-          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ] || { [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; }; then
             done=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" --jq '[.statuses[] | select(.context=="shepherd")][0].state // ""')
-            case "$done" in success|failure) skip "shepherd already finished on $head ($done); comment /shepherd to run again" ;; esac
+            case "$done" in success|failure|error) skip "shepherd already finished on $head ($done); comment /shepherd to run again" ;; esac
+            # The sweep dispatched this run for a pending head; a run that finished it while this one queued wins.
+            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$done" != pending ] && { [ -n "$done" ] || [ -z "$LABEL" ]; }; then skip "head is no longer pending"; fi
           fi
           n=$(jq '[.commits[] | select(.messageBody | test("^Shepherd: "; "m"))] | length' <<<"$pr")
           if [ "$n" -ge "$MAX_SHEPHERD_COMMITS" ]; then
@@ -200,7 +204,7 @@ jobs:
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#9f42bb947c33cbbc9594a31263b03fafff796d1d" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#33b299fe13d6984bd40b450dc3ac9f9488dface1" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -256,11 +260,12 @@ jobs:
       BRANCH: ${{ needs.gate.outputs.branch }}
       BASE: ${{ needs.gate.outputs.base }}
       H0: ${{ needs.gate.outputs.head }}
+      HAS_PAT: ${{ secrets.SHEPHERD_TOKEN != '' }}
       ITERATED: ${{ needs.iterate.result }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       # Paths that run without review: CI, git and editor hooks, package manager config, manifests and lockfiles.
       # Matched case-insensitively.
-      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*\.lockb?|[^/]*[._-]lock\.(json|ya?ml|hcl|toml)|[^/]*\.lockfile|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$' }}
+      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*\.lockb?|[^/]*[._-]lock\.(json|ya?ml|hcl|toml)|[^/]*\.lockfile|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$|(^|/)\.cargo/|(^|/)(pnpm-workspace\.yaml|pipfile|deno\.jsonc?)$' }}
       SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
     steps:
       # First, before any setup that could fail: a stopped iteration must never leave the gate's pending standing.
@@ -299,6 +304,7 @@ jobs:
           echo "head=$H0" >> "$GITHUB_OUTPUT"
           refuse() { echo "::error::$1"; echo "refused=$1" >> "$GITHUB_OUTPUT"; exit 0; }
           [ -f ../handoff/fix.bundle ] || { echo "no commits handed off"; exit 0; }
+          [ "$HAS_PAT" = true ] || refuse "set the SHEPHERD_TOKEN secret so shepherd can push"
           [ "$BRANCH" != "$DEFAULT_BRANCH" ] && [ "$BRANCH" != "$BASE" ] || refuse "will not push to $BRANCH"
           git -c core.hooksPath=/dev/null fetch -q ../handoff/fix.bundle "shepherd-handoff:refs/shepherd/handoff"
           new=$(git rev-parse refs/shepherd/handoff)
@@ -338,6 +344,8 @@ jobs:
               s = json.load(open(sys.argv[1]))
           except Exception:
               s = {}
+          if not isinstance(s, dict):
+              s = {}
           state = s.get("state") if s.get("state") in ("success", "pending", "failure") else "pending"
           desc = " ".join(str(s.get("description") or "iteration ended without a status").split())
           if sys.argv[3]:
@@ -351,7 +359,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
           echo "state=$state" >> "$GITHUB_OUTPUT"
       - name: Rerun the jobs ci-repair asked for
-        if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/rerun-jobs.txt') != ''
+        if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && steps.push.outputs.pushed == '' && hashFiles('handoff/rerun-jobs.txt') != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -371,7 +379,7 @@ jobs:
       - if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success'
         shell: bash
         run: |
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#9f42bb947c33cbbc9594a31263b03fafff796d1d" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#33b299fe13d6984bd40b450dc3ac9f9488dface1" # trial: unreleased branch
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Notify
         if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success' # from the workspace, not the PR checkout
@@ -382,3 +390,11 @@ jobs:
           SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }}
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
         run: shepherd notify --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --state "$STATE" --file description.txt
+      # Any step above failing (checkout, push, status) must not leave the gate's pending for the sweep to rerun.
+      - name: Report a failed publish
+        if: always() && failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.push.outputs.head || needs.gate.outputs.head }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state=error -f description="shepherd could not publish this iteration; see the run, then comment /shepherd" -f target_url="$RUN_URL" >/dev/null
