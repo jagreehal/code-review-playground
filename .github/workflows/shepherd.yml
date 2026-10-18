@@ -4,12 +4,12 @@
 # (success, or failure naming what the author must do). Installed by `shepherd workflows`.
 #
 # The model reads text anyone can write (comments, review threads, bot output), so it never holds a write
-# credential. `iterate` runs it with github.token, which can comment, resolve threads and read, never push;
-# its commits leave as a git bundle. `publish` runs no model: it pushes the bundle to the PR's own branch only
+# credential. `gate` (no model) decides whether to run. `iterate` runs the model with github.token, which can
+# comment, resolve threads and read, never push; its commits leave as a git bundle. `publish` runs no model: it pushes the bundle to the PR's own branch only
 # as a fast-forward that touches nothing matching SHEPHERD_PUSH_DENY, then sets the status and notifies.
 #
 # Secrets:
-#   SHEPHERD_TOKEN    fine-grained PAT: contents and pull requests (read/write). Only the gate and `publish`
+#   SHEPHERD_TOKEN    fine-grained PAT: contents, pull requests and commit statuses (read/write). Only `gate` and `publish`
 #                     see it. Pushes made with github.token start no workflows, so the loop would stall.
 #   OPENCODE_API_KEY  the models (any provider: set the matching key and SHEPHERD_MODEL).
 #   SHEPHERD_NOTIFY_WEBHOOK  optional: Slack Incoming Webhook or any JSON endpoint, told when a PR needs
@@ -19,8 +19,8 @@
 #   SHEPHERD_LABEL    optional: shepherd only PRs carrying this label. Whatever opens PRs (a person, Claude
 #                     Code, Codex, another agent) hands one over by adding it.
 #   SHEPHERD_NOTIFY_ON  optional: states that notify, e.g. "failure"; empty = success,failure.
-#   SHEPHERD_PUSH_DENY  optional: extended regex of paths a handed-off fix may not touch;
-#                     empty = workflows, .gitmodules and .gitattributes.
+#   SHEPHERD_PUSH_DENY  optional: extended regex of paths a handed-off fix may not touch; empty = workflows,
+#                     git and editor hooks, package manager config, manifests and lockfiles.
 #
 # Edit `workflows: [ci, stamp]` to name your CI workflow. workflow_run, pull_request_target and schedule
 # run this file from the default branch, so a PR cannot change how it is shepherded.
@@ -74,7 +74,9 @@ jobs:
             fi
           done
 
-  iterate:
+  # Runs no model. The only job that reads SHEPHERD_TOKEN besides publish: a secret any step of a job uses sits
+  # in that job's runner memory, where a hijacked model step could read it.
+  gate:
     if: >-
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
         && github.event.workflow_run.pull_requests[0] != null
@@ -86,32 +88,23 @@ jobs:
         && github.event.label.name == vars.SHEPHERD_LABEL)
       || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    # On the job, not the workflow: a run the job's `if` skips (every CI run on main, every ordinary comment)
-    # never takes the one pending slot from a real iteration.
-    concurrency:
-      group: shepherd-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      cancel-in-progress: false # an iteration may be mid-handoff; later triggers queue, and GitHub keeps only the newest
-    # github.token for the model: comment, resolve threads, read code and CI. No contents write.
+    timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: write
-      issues: write
-      actions: read
-      checks: read
-      statuses: read
+      pull-requests: read
     outputs:
       run: ${{ steps.gate.outputs.run }}
       branch: ${{ steps.gate.outputs.branch }}
       base: ${{ steps.gate.outputs.base }}
       head: ${{ steps.gate.outputs.head }}
+      git_name: ${{ steps.gate.outputs.git_name }}
+      git_email: ${{ steps.gate.outputs.git_email }}
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
       LABEL: ${{ vars.SHEPHERD_LABEL }}
-      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       MAX_SHEPHERD_COMMITS: 20
     steps:
-      # The only step in this job that sees SHEPHERD_TOKEN, and it runs before any model does.
       - name: Decide whether this iteration is worth running
         id: gate
         env:
@@ -124,6 +117,8 @@ jobs:
           [ "$state" = OPEN ] || skip "PR is $state"
           [ "$(jq -r .isCrossRepository <<<"$pr")" = false ] || skip "fork PR"
           [ "$(jq -r .isDraft <<<"$pr")" = false ] || skip "draft"
+          # publish pushes to the head branch: never let that be the default branch.
+          [ "$branch" != "$DEFAULT_BRANCH" ] || skip "the PR's head is the default branch"
           labelled=false
           [ -n "$LABEL" ] && jq -e --arg l "$LABEL" 'any(.labels[]; .name == $l)' <<<"$pr" >/dev/null && labelled=true
           # A label scopes the automatic triggers; a /shepherd comment always runs.
@@ -154,29 +149,46 @@ jobs:
             echo "git_email=41898282+github-actions[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
           fi
           { echo "run=true"; echo "branch=$branch"; echo "base=$(jq -r .baseRefName <<<"$pr")"; echo "head=$head"; } >> "$GITHUB_OUTPUT"
-      - if: steps.gate.outputs.run == 'true'
-        uses: actions/checkout@v4
+
+  iterate:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Per PR, on the job: iterations queue, and a run the gate skipped never takes the pending slot.
+    concurrency:
+      group: shepherd-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
+      cancel-in-progress: false # an iteration may be mid-handoff; later triggers queue, and GitHub keeps only the newest
+    # github.token for the model: comment, resolve threads, read code and CI. No contents write, and no
+    # SHEPHERD_TOKEN anywhere in this job.
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+      checks: read
+      statuses: read
+    env:
+      PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
+      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
+    steps:
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.gate.outputs.branch }}
+          ref: ${{ needs.gate.outputs.branch }}
           fetch-depth: 0
           persist-credentials: false # no token in .git/config for the model to find
-      - if: steps.gate.outputs.run == 'true'
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the model key
-      - if: steps.gate.outputs.run == 'true'
-        uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the model key
+      - uses: actions/setup-node@v4 # no cache: this job runs the model
         with:
           node-version: 24
-          cache: npm
-      - if: steps.gate.outputs.run == 'true'
-        run: npm ci
-      - if: steps.gate.outputs.run == 'true'
-        shell: bash # -eo pipefail: a failed download fails here, not in the agent step
+      - run: npm ci --ignore-scripts
+      - shell: bash # -eo pipefail: a failed download fails here, not in the agent step
         env:
-          GIT_NAME: ${{ steps.gate.outputs.git_name }}
-          GIT_EMAIL: ${{ steps.gate.outputs.git_email }}
+          GIT_NAME: ${{ needs.gate.outputs.git_name }}
+          GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#7479edcace1fc8adb0a35cf2e5f22cd054757cd9" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#b12c8c80bb4fffb45b2e6c799988a37ae83239c3" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -187,8 +199,7 @@ jobs:
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
           mkdir -p "$RUNNER_TEMP/handoff"
-      - if: steps.gate.outputs.run == 'true'
-        name: One shepherd iteration
+      - name: One shepherd iteration
         timeout-minutes: 30 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -203,23 +214,20 @@ jobs:
           already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
           would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further
           iterations; the next one starts when CI or stamp finishes on the head the workflow pushes."
-      - if: steps.gate.outputs.run == 'true'
-        name: Bundle the commits
+      - name: Bundle the commits
         env:
-          H0: ${{ steps.gate.outputs.head }}
+          H0: ${{ needs.gate.outputs.head }}
         run: |
           git branch -f shepherd-handoff HEAD
           if [ "$(git rev-parse HEAD)" != "$H0" ]; then git bundle create "$RUNNER_TEMP/handoff/fix.bundle" "$H0..shepherd-handoff"; fi
-      - if: steps.gate.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: shepherd-handoff
           path: ${{ runner.temp }}/handoff
           if-no-files-found: ignore
 
   publish:
-    needs: iterate
-    if: needs.iterate.outputs.run == 'true'
+    needs: [gate, iterate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # No model runs here, and nothing the model wrote runs here: the bundle is fetched and checked, never executed.
@@ -230,10 +238,12 @@ jobs:
       actions: write # rerun the jobs ci-repair asked for
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      BRANCH: ${{ needs.iterate.outputs.branch }}
-      BASE: ${{ needs.iterate.outputs.base }}
-      H0: ${{ needs.iterate.outputs.head }}
-      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$' }}
+      BRANCH: ${{ needs.gate.outputs.branch }}
+      BASE: ${{ needs.gate.outputs.base }}
+      H0: ${{ needs.gate.outputs.head }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      # Paths that run without review: CI, git and editor hooks, package manager config, manifests and lockfiles.
+      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|[^/]*lock[^/]*|Makefile|justfile|Taskfile\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$' }}
       SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
     steps:
       - uses: actions/download-artifact@v4
@@ -244,14 +254,14 @@ jobs:
           path: handoff
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.iterate.outputs.branch }}
+          ref: ${{ needs.gate.outputs.branch }}
           fetch-depth: 0
           path: repo
           token: ${{ secrets.SHEPHERD_TOKEN || github.token }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
       - shell: bash
         run: |
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#7479edcace1fc8adb0a35cf2e5f22cd054757cd9" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#b12c8c80bb4fffb45b2e6c799988a37ae83239c3" # trial: unreleased branch
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Push the handed-off commits
         id: push
@@ -261,24 +271,26 @@ jobs:
           GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
         run: |
           echo "head=$H0" >> "$GITHUB_OUTPUT"
+          refuse() { echo "::error::$1"; echo "refused=$1" >> "$GITHUB_OUTPUT"; exit 0; }
           [ -f ../handoff/fix.bundle ] || { echo "no commits handed off"; exit 0; }
+          [ "$BRANCH" != "$DEFAULT_BRANCH" ] && [ "$BRANCH" != "$BASE" ] || refuse "will not push to $BRANCH"
           git -c core.hooksPath=/dev/null fetch -q ../handoff/fix.bundle "shepherd-handoff:refs/shepherd/handoff"
           new=$(git rev-parse refs/shepherd/handoff)
           live=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
           [ "$live" = "$H0" ] || { echo "someone pushed ($H0 -> $live); the next iteration re-baselines"; echo "stale=true" >> "$GITHUB_OUTPUT"; exit 0; }
-          git merge-base --is-ancestor "$H0" "$new" || { echo "::error::the handoff is not a fast-forward of $H0"; exit 1; }
+          git merge-base --is-ancestor "$H0" "$new" || refuse "the fixes are not a fast-forward of $H0"
           # A path counts when the fixes left it different from both the head they started on and the base, so a
           # base merge's own changes pass. NUL-delimited and rename-free: no quoted or renamed path slips by.
           git diff -z --no-renames --name-only "$H0" "$new" > ../from-head
           git diff -z --no-renames --name-only "origin/$BASE" "$new" > ../from-base
-          python3 - ../from-head ../from-base "$DENY" <<'PY' || { echo "::error::the fixes touch a protected path; a person should look"; exit 1; }
+          bad=$(python3 - ../from-head ../from-base "$DENY" <<'PY'
           import re, sys
           read = lambda f: {p for p in open(f, "rb").read().split(b"\0") if p}
           deny = re.compile(sys.argv[3].encode())
-          bad = sorted(p for p in read(sys.argv[1]) & read(sys.argv[2]) if deny.search(p))
-          for p in bad: print(p.decode(errors="replace"))
-          sys.exit(1 if bad else 0)
+          print(" ".join(sorted(p.decode(errors="replace") for p in read(sys.argv[1]) & read(sys.argv[2]) if deny.search(p))))
           PY
+          )
+          [ -z "$bad" ] || refuse "the fixes touch protected paths: $bad"
           git -c core.hooksPath=/dev/null push origin "$new:refs/heads/$BRANCH"
           { echo "head=$new"; echo "pushed=$(git rev-list --count "$H0..$new")"; } >> "$GITHUB_OUTPUT"
       - name: Set the shepherd status
@@ -288,9 +300,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ steps.push.outputs.head }}
           PUSHED: ${{ steps.push.outputs.pushed }}
+          REFUSED: ${{ steps.push.outputs.refused }}
         run: |
           # status.json is model output: only a known state and one short line of text get through.
-          python3 - handoff/status.json "$PUSHED" > status.out <<'PY'
+          python3 - handoff/status.json "$PUSHED" "$REFUSED" > status.out <<'PY'
           import json, sys
           try:
               s = json.load(open(sys.argv[1]))
@@ -298,7 +311,9 @@ jobs:
               s = {}
           state = s.get("state") if s.get("state") in ("success", "pending", "failure") else "pending"
           desc = " ".join(str(s.get("description") or "iteration ended without a status").split())
-          if sys.argv[2]:
+          if sys.argv[3]:
+              state, desc = "failure", f"fixes not pushed, a person should look: {' '.join(sys.argv[3].split())}"
+          elif sys.argv[2]:
               state, desc = "pending", f"pushed {sys.argv[2]} commit(s) for review; {desc}"
           print(state)
           print(desc[:139])
@@ -311,8 +326,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Model output names the jobs: rerun one only if it ran on this PR's head from a pull_request event.
           grep -E '^[0-9]+$' handoff/rerun-jobs.txt | head -10 | while read -r job; do
-            gh run rerun --job "$job" -R "$GITHUB_REPOSITORY" || echo "could not rerun job $job"
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job" --jq 'select(.head_sha == env.H0) | .run_id' 2>/dev/null || true)
+            event=$([ -n "$run" ] && gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .event 2>/dev/null || true)
+            if [ "$event" = pull_request ]; then
+              gh run rerun --job "$job" -R "$GITHUB_REPOSITORY" || echo "could not rerun job $job"
+            else
+              echo "skip job $job: not a pull_request job on $H0"
+            fi
           done
       - name: Notify
         if: steps.status.outcome == 'success' # from the workspace, not the PR checkout

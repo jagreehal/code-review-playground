@@ -60,15 +60,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the model key
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4 # no cache: this job runs the model
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - shell: bash # -eo pipefail: a failed download fails here, not three steps later
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#7479edcace1fc8adb0a35cf2e5f22cd054757cd9" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#b12c8c80bb4fffb45b2e6c799988a37ae83239c3" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install
