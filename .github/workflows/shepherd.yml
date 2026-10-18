@@ -188,7 +188,7 @@ jobs:
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#877e2dae6feebe1e7c971880d03c52d9bd492d04" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#bb14a0e562224c53fd6e89bac632853feb1064de" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -244,7 +244,7 @@ jobs:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       # Paths that run without review: CI, git and editor hooks, package manager config, manifests and lockfiles.
       # Matched case-insensitively.
-      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|[^/]*\.lock|bun\.lockb|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|go\.sum|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$' }}
+      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*[._-]lock(b|file)?([._-][^/]*)?|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$' }}
       SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
     steps:
       - uses: actions/download-artifact@v4
@@ -262,7 +262,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
       - shell: bash
         run: |
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#877e2dae6feebe1e7c971880d03c52d9bd492d04" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#bb14a0e562224c53fd6e89bac632853feb1064de" # trial: unreleased branch
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Push the handed-off commits
         id: push
