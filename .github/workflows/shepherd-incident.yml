@@ -64,15 +64,15 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - run: npm ci
       - shell: bash # -eo pipefail: a failed download fails here, not three steps later
         run: |
-          npm ci
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#6e5d3b215b7d1e8cbc0f1a7841ac9b784912dfe2" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#7479edcace1fc8adb0a35cf2e5f22cd054757cd9" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install
-          curl -fsSL https://opencode.ai/install | bash -s -- --version 2.0.18
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0 # 1.x: this installer refuses 2.x
           "$HOME/.opencode/bin/opencode" --version # fails the step if the install did not land
           echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
           git config user.name "github-actions[bot]"
