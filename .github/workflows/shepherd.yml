@@ -1,11 +1,16 @@
 # shepherd in CI: one loop iteration each time CI or stamp finishes on a PR, on a `/shepherd` comment,
-# when a PR gets the SHEPHERD_LABEL, or from the sweep. Each iteration pushes fixes, CI and stamp run on
-# the new head, and their completion starts the next one, until shepherd sets a final `shepherd` status
+# when a PR gets the SHEPHERD_LABEL, or from the sweep. Each iteration's fixes are pushed, CI and stamp run
+# on the new head, and their completion starts the next one, until shepherd sets a final `shepherd` status
 # (success, or failure naming what the author must do). Installed by `shepherd workflows`.
 #
+# The model reads text anyone can write (comments, review threads, bot output), so it never holds a write
+# credential. `iterate` runs it with github.token, which can comment, resolve threads and read, never push;
+# its commits leave as a git bundle. `publish` runs no model: it pushes the bundle to the PR's own branch only
+# as a fast-forward that touches nothing matching SHEPHERD_PUSH_DENY, then sets the status and notifies.
+#
 # Secrets:
-#   SHEPHERD_TOKEN    fine-grained PAT: contents, pull requests, commit statuses (read/write), actions (read).
-#                     Pushes made with github.token start no workflows, so the loop would stall after one fix.
+#   SHEPHERD_TOKEN    fine-grained PAT: contents and pull requests (read/write). Only the gate and `publish`
+#                     see it. Pushes made with github.token start no workflows, so the loop would stall.
 #   OPENCODE_API_KEY  the models (any provider: set the matching key and SHEPHERD_MODEL).
 #   SHEPHERD_NOTIFY_WEBHOOK  optional: Slack Incoming Webhook or any JSON endpoint, told when a PR needs
 #                     you or is ready to merge.
@@ -14,6 +19,8 @@
 #   SHEPHERD_LABEL    optional: shepherd only PRs carrying this label. Whatever opens PRs (a person, Claude
 #                     Code, Codex, another agent) hands one over by adding it.
 #   SHEPHERD_NOTIFY_ON  optional: states that notify, e.g. "failure"; empty = success,failure.
+#   SHEPHERD_PUSH_DENY  optional: extended regex of paths a handed-off fix may not touch;
+#                     empty = workflows, .gitmodules and .gitattributes.
 #
 # Edit `workflows: [ci, stamp]` to name your CI workflow. workflow_run, pull_request_target and schedule
 # run this file from the default branch, so a PR cannot change how it is shepherded.
@@ -84,95 +91,235 @@ jobs:
     # never takes the one pending slot from a real iteration.
     concurrency:
       group: shepherd-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      cancel-in-progress: false # an iteration may be mid-push; later triggers queue, and GitHub keeps only the newest
+      cancel-in-progress: false # an iteration may be mid-handoff; later triggers queue, and GitHub keeps only the newest
+    # github.token for the model: comment, resolve threads, read code and CI. No contents write.
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+      checks: read
+      statuses: read
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      branch: ${{ steps.gate.outputs.branch }}
+      base: ${{ steps.gate.outputs.base }}
+      head: ${{ steps.gate.outputs.head }}
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
       LABEL: ${{ vars.SHEPHERD_LABEL }}
-      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with write access and the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
       MAX_SHEPHERD_COMMITS: 20
     steps:
-      # GH_TOKEN goes only to the steps that call gh, never to an action's environment.
+      # The only step in this job that sees SHEPHERD_TOKEN, and it runs before any model does.
       - name: Decide whether this iteration is worth running
         id: gate
         env:
           GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
         run: |
           [[ "$PR" =~ ^[0-9]+$ ]] || { echo "PR must be a number"; exit 1; }
-          pr=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json state,author,headRefOid,headRefName,isCrossRepository,isDraft,labels,commits)
-          state=$(jq -r .state <<<"$pr"); head=$(jq -r .headRefOid <<<"$pr"); author=$(jq -r .author.login <<<"$pr")
+          pr=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json state,author,headRefOid,headRefName,baseRefName,isCrossRepository,isDraft,labels,commits)
+          state=$(jq -r .state <<<"$pr"); head=$(jq -r .headRefOid <<<"$pr"); author=$(jq -r .author.login <<<"$pr"); branch=$(jq -r .headRefName <<<"$pr")
           skip() { echo "skip: $1"; echo "run=false" >> "$GITHUB_OUTPUT"; exit 0; }
           [ "$state" = OPEN ] || skip "PR is $state"
           [ "$(jq -r .isCrossRepository <<<"$pr")" = false ] || skip "fork PR"
           [ "$(jq -r .isDraft <<<"$pr")" = false ] || skip "draft"
+          labelled=false
+          [ -n "$LABEL" ] && jq -e --arg l "$LABEL" 'any(.labels[]; .name == $l)' <<<"$pr" >/dev/null && labelled=true
           # A label scopes the automatic triggers; a /shepherd comment always runs.
-          if [ -n "$LABEL" ] && [ "${{ github.event_name }}" != issue_comment ]; then
-            jq -e --arg l "$LABEL" 'any(.labels[]; .name == $l)' <<<"$pr" >/dev/null || skip "no $LABEL label"
+          if [ -n "$LABEL" ] && [ "$GITHUB_EVENT_NAME" != issue_comment ] && [ "$labelled" = false ]; then skip "no $LABEL label"; fi
+          # An incident fix was written by an agent from alert text. A person starts shepherd on it.
+          if [[ "$branch" == incident/* ]] && [ "$GITHUB_EVENT_NAME" != issue_comment ] && [ "$labelled" = false ]; then
+            skip "incident fix: comment /shepherd${LABEL:+ or add the $LABEL label} to start"
           fi
           # Only PRs by people who could push this code themselves: shepherd runs their checks with these secrets.
           perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$author/permission" --jq .permission 2>/dev/null || echo none)
           case "$perm" in admin|maintain|write) ;; *) skip "author $author has $perm access" ;; esac
-          if [ "${{ github.event_name }}" = workflow_run ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
             done=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" --jq '[.statuses[] | select(.context=="shepherd")][0].state // ""')
             case "$done" in success|failure) skip "shepherd already finished on $head ($done); comment /shepherd to run again" ;; esac
           fi
           n=$(jq '[.commits[] | select(.messageBody | test("^Shepherd: "; "m"))] | length' <<<"$pr")
           if [ "$n" -ge "$MAX_SHEPHERD_COMMITS" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/statuses/$head" -f context=shepherd -f state=failure -f description="stopped after $n shepherd commits; a person should look" >/dev/null
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$head" -f context=shepherd -f state=failure -f description="stopped after $n shepherd commits; a person should look" >/dev/null || true
             skip "$n shepherd commits"
           fi
-          echo "run=true" >> "$GITHUB_OUTPUT"; echo "branch=$(jq -r .headRefName <<<"$pr")" >> "$GITHUB_OUTPUT"
+          # Commits go out under the token's owner, as their own pushes would.
+          login=$(gh api user --jq .login 2>/dev/null || true)
+          if [ -n "$login" ]; then
+            echo "git_name=$login" >> "$GITHUB_OUTPUT"
+            echo "git_email=$(gh api user --jq '"\(.id)+\(.login)@users.noreply.github.com"')" >> "$GITHUB_OUTPUT"
+          else
+            echo "git_name=github-actions[bot]" >> "$GITHUB_OUTPUT"
+            echo "git_email=41898282+github-actions[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+          fi
+          { echo "run=true"; echo "branch=$branch"; echo "base=$(jq -r .baseRefName <<<"$pr")"; echo "head=$head"; } >> "$GITHUB_OUTPUT"
       - if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.gate.outputs.branch }}
           fetch-depth: 0
-          token: ${{ secrets.SHEPHERD_TOKEN || github.token }}
-      # shepherd notify remembers what it last sent for this PR under .git/shepherd; carry that across runs
-      # so a rerun does not repeat an unchanged notification. Restored after checkout, which would wipe it.
+          persist-credentials: false # no token in .git/config for the model to find
       - if: steps.gate.outputs.run == 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: .git/shepherd/notified-${{ env.PR }}.json
-          key: shepherd-notify-${{ env.PR }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: shepherd-notify-${{ env.PR }}-
-      - if: steps.gate.outputs.run == 'true'
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds a write token
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the model key
       - if: steps.gate.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
       - if: steps.gate.outputs.run == 'true'
+        run: npm ci
+      - if: steps.gate.outputs.run == 'true'
+        shell: bash # -eo pipefail: a failed download fails here, not in the agent step
         env:
-          GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+          GIT_NAME: ${{ steps.gate.outputs.git_name }}
+          GIT_EMAIL: ${{ steps.gate.outputs.git_email }}
         run: |
-          npm ci
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#6e5d3b215b7d1e8cbc0f1a7841ac9b784912dfe2" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#7479edcace1fc8adb0a35cf2e5f22cd054757cd9" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
-          curl -fsSL https://opencode.ai/install | bash -s -- --version 2.0.18 && echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
-          git config user.name "$(gh api user --jq .login)"
-          git config user.email "$(gh api user --jq '"\(.id)+\(.login)@users.noreply.github.com"')"
+          # OpenCode 1.x: its installer refuses 2.x releases, which have their own (opencode.ai/v2/install).
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0
+          "$HOME/.opencode/bin/opencode" --version # fails the step if the install did not land
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          git config user.name "$GIT_NAME"
+          git config user.email "$GIT_EMAIL"
+          mkdir -p "$RUNNER_TEMP/handoff"
       - if: steps.gate.outputs.run == 'true'
         name: One shepherd iteration
+        timeout-minutes: 30 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
-          GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
+          SHEPHERD_HANDOFF: ${{ runner.temp }}/handoff
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
           OPENCODE_DISABLE_PROJECT_CONFIG: "1" # the checkout's opencode.json, .opencode/ plugins and AGENTS.md are PR content
           OPENCODE_DISABLE_AUTOUPDATE: "1"
           MODEL: ${{ vars.SHEPHERD_MODEL || 'opencode-go/kimi-k3' }}
+        run: |
+          opencode run --auto -m "$MODEL" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
+          SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. You are running in GitHub Actions on the PR branch,
+          already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
+          would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further
+          iterations; the next one starts when CI or stamp finishes on the head the workflow pushes."
+      - if: steps.gate.outputs.run == 'true'
+        name: Bundle the commits
+        env:
+          H0: ${{ steps.gate.outputs.head }}
+        run: |
+          git branch -f shepherd-handoff HEAD
+          if [ "$(git rev-parse HEAD)" != "$H0" ]; then git bundle create "$RUNNER_TEMP/handoff/fix.bundle" "$H0..shepherd-handoff"; fi
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: shepherd-handoff
+          path: ${{ runner.temp }}/handoff
+          if-no-files-found: ignore
+
+  publish:
+    needs: iterate
+    if: needs.iterate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # No model runs here, and nothing the model wrote runs here: the bundle is fetched and checked, never executed.
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+      actions: write # rerun the jobs ci-repair asked for
+    env:
+      PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
+      BRANCH: ${{ needs.iterate.outputs.branch }}
+      BASE: ${{ needs.iterate.outputs.base }}
+      H0: ${{ needs.iterate.outputs.head }}
+      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$' }}
+      SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
+    steps:
+      - uses: actions/download-artifact@v4
+        id: handoff
+        continue-on-error: true # no artifact: the iteration wrote nothing
+        with:
+          name: shepherd-handoff
+          path: handoff
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.iterate.outputs.branch }}
+          fetch-depth: 0
+          path: repo
+          token: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
+      - shell: bash
+        run: |
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#7479edcace1fc8adb0a35cf2e5f22cd054757cd9" # trial: unreleased branch
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+      - name: Push the handed-off commits
+        id: push
+        working-directory: repo
+        shell: bash # -eo pipefail
+        env:
+          GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+        run: |
+          echo "head=$H0" >> "$GITHUB_OUTPUT"
+          [ -f ../handoff/fix.bundle ] || { echo "no commits handed off"; exit 0; }
+          git -c core.hooksPath=/dev/null fetch -q ../handoff/fix.bundle "shepherd-handoff:refs/shepherd/handoff"
+          new=$(git rev-parse refs/shepherd/handoff)
+          live=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+          [ "$live" = "$H0" ] || { echo "someone pushed ($H0 -> $live); the next iteration re-baselines"; echo "stale=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          git merge-base --is-ancestor "$H0" "$new" || { echo "::error::the handoff is not a fast-forward of $H0"; exit 1; }
+          # A path counts when the fixes left it different from both the head they started on and the base, so a
+          # base merge's own changes pass. NUL-delimited and rename-free: no quoted or renamed path slips by.
+          git diff -z --no-renames --name-only "$H0" "$new" > ../from-head
+          git diff -z --no-renames --name-only "origin/$BASE" "$new" > ../from-base
+          python3 - ../from-head ../from-base "$DENY" <<'PY' || { echo "::error::the fixes touch a protected path; a person should look"; exit 1; }
+          import re, sys
+          read = lambda f: {p for p in open(f, "rb").read().split(b"\0") if p}
+          deny = re.compile(sys.argv[3].encode())
+          bad = sorted(p for p in read(sys.argv[1]) & read(sys.argv[2]) if deny.search(p))
+          for p in bad: print(p.decode(errors="replace"))
+          sys.exit(1 if bad else 0)
+          PY
+          git -c core.hooksPath=/dev/null push origin "$new:refs/heads/$BRANCH"
+          { echo "head=$new"; echo "pushed=$(git rev-list --count "$H0..$new")"; } >> "$GITHUB_OUTPUT"
+      - name: Set the shepherd status
+        id: status
+        if: steps.push.outputs.stale != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.push.outputs.head }}
+          PUSHED: ${{ steps.push.outputs.pushed }}
+        run: |
+          # status.json is model output: only a known state and one short line of text get through.
+          python3 - handoff/status.json "$PUSHED" > status.out <<'PY'
+          import json, sys
+          try:
+              s = json.load(open(sys.argv[1]))
+          except Exception:
+              s = {}
+          state = s.get("state") if s.get("state") in ("success", "pending", "failure") else "pending"
+          desc = " ".join(str(s.get("description") or "iteration ended without a status").split())
+          if sys.argv[2]:
+              state, desc = "pending", f"pushed {sys.argv[2]} commit(s) for review; {desc}"
+          print(state)
+          print(desc[:139])
+          PY
+          state=$(sed -n 1p status.out); sed -n 2p status.out > description.txt
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+      - name: Rerun the jobs ci-repair asked for
+        if: steps.push.outputs.stale != 'true' && hashFiles('handoff/rerun-jobs.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          grep -E '^[0-9]+$' handoff/rerun-jobs.txt | head -10 | while read -r job; do
+            gh run rerun --job "$job" -R "$GITHUB_REPOSITORY" || echo "could not rerun job $job"
+          done
+      - name: Notify
+        if: steps.status.outcome == 'success' # from the workspace, not the PR checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.push.outputs.head }}
+          STATE: ${{ steps.status.outputs.state }}
           SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }}
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
-        run: |
-          opencode run --auto -m "$MODEL" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR.
-          You are running in GitHub Actions on the PR branch, already checked out; push with plain git push.
-          Nobody is watching this session: never wait for an answer. Anything you would ask the user is deferred,
-          listed in the iteration summary, and named in the shepherd commit status. Do not schedule further iterations;
-          the next one starts when CI or stamp finishes on the head you push."
-      - if: always() && steps.gate.outputs.run == 'true' # a missing record only warns
-        uses: actions/cache/save@v4
-        with:
-          path: .git/shepherd/notified-${{ env.PR }}.json
-          key: shepherd-notify-${{ env.PR }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: shepherd notify --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --state "$STATE" --file description.txt
