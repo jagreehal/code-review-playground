@@ -44,13 +44,21 @@ on:
 permissions:
   contents: read
 
+# One run per PR at a time, gate to publish, so a run's statuses never interleave with another's. The condition
+# is the gate's `if` verbatim (a test keeps them in step): a run the gate would skip gets a group of its own, so
+# it never takes the PR's one pending slot from a real iteration.
+concurrency:
+  group: >-
+    ${{ github.event_name == 'schedule' && 'shepherd-sweep'
+      || (((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/shepherd') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) || (github.event_name == 'pull_request_target' && vars.SHEPHERD_LABEL != '' && github.event.label.name == vars.SHEPHERD_LABEL) || github.event_name == 'workflow_dispatch') && format('shepherd-{0}', github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr))
+      || format('shepherd-skip-{0}', github.run_id) }}
+  cancel-in-progress: false # a run may be mid-handoff; later triggers queue, and GitHub keeps only the newest
+
 jobs:
   sweep:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    concurrency:
-      group: shepherd-sweep
     permissions:
       actions: write # workflow_dispatch of this file, one run per PR
       statuses: read
@@ -163,10 +171,6 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Per PR, on the job: iterations queue, and a run the gate skipped never takes the pending slot.
-    concurrency:
-      group: shepherd-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      cancel-in-progress: false # an iteration may be mid-handoff; later triggers queue, and GitHub keeps only the newest
     # github.token for the model: comment, resolve threads, read code and CI. No contents write, and no
     # SHEPHERD_TOKEN anywhere in this job.
     permissions:
@@ -196,7 +200,7 @@ jobs:
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#3d980136634a4393e9315064d3f507af99addc6f" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#9f42bb947c33cbbc9594a31263b03fafff796d1d" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -259,6 +263,17 @@ jobs:
       DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*\.lockb?|[^/]*[._-]lock\.(json|ya?ml|hcl|toml)|[^/]*\.lockfile|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$' }}
       SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
     steps:
+      # First, before any setup that could fail: a stopped iteration must never leave the gate's pending standing.
+      - name: Report a stopped iteration
+        id: stopped
+        if: env.ITERATED != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "shepherd iteration ${ITERATED}; comment /shepherd to retry" > description.txt
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$H0" -f context=shepherd -f state=error -f description="$(cat description.txt)" -f target_url="$RUN_URL" >/dev/null
+          echo "state=error" >> "$GITHUB_OUTPUT"
       - if: env.ITERATED == 'success'
         uses: actions/download-artifact@v4
         id: handoff
@@ -273,11 +288,6 @@ jobs:
           fetch-depth: 0
           path: repo
           token: ${{ secrets.SHEPHERD_TOKEN || github.token }}
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
-      - shell: bash
-        run: |
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#3d980136634a4393e9315064d3f507af99addc6f" # trial: unreleased branch
-          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Push the handed-off commits
         id: push
         if: env.ITERATED == 'success'
@@ -312,16 +322,6 @@ jobs:
           [ -z "$bad" ] || refuse "the fixes touch protected paths: $bad"
           git -c core.hooksPath=/dev/null push origin "$new:refs/heads/$BRANCH"
           { echo "head=$new"; echo "pushed=$(git rev-list --count "$H0..$new")"; } >> "$GITHUB_OUTPUT"
-      - name: Report a stopped iteration
-        id: stopped
-        if: env.ITERATED != 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          echo "shepherd iteration ${ITERATED}; comment /shepherd to retry" > description.txt
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$H0" -f context=shepherd -f state=error -f description="$(cat description.txt)" -f target_url="$RUN_URL" >/dev/null
-          echo "state=error" >> "$GITHUB_OUTPUT"
       - name: Set the shepherd status
         id: status
         if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true'
@@ -365,6 +365,14 @@ jobs:
               echo "skip job $job: not a pull_request job on $H0"
             fi
           done
+      # Only notify needs the CLI: a failed install here can skip a notification, never a status.
+      - if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
+      - if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success'
+        shell: bash
+        run: |
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#9f42bb947c33cbbc9594a31263b03fafff796d1d" # trial: unreleased branch
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Notify
         if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success' # from the workspace, not the PR checkout
         env:
