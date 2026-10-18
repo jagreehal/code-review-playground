@@ -92,6 +92,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      statuses: write # pending before the model starts
     outputs:
       run: ${{ steps.gate.outputs.run }}
       branch: ${{ steps.gate.outputs.branch }}
@@ -149,6 +150,13 @@ jobs:
             echo "git_email=41898282+github-actions[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
           fi
           { echo "run=true"; echo "branch=$branch"; echo "base=$(jq -r .baseRefName <<<"$pr")"; echo "head=$head"; } >> "$GITHUB_OUTPUT"
+      # A rerun must never leave an old green standing while the model works or after it fails.
+      - name: Mark the head pending
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.gate.outputs.head }}
+        run: gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state=pending -f description="shepherd iteration running" >/dev/null
 
   iterate:
     needs: gate
@@ -188,7 +196,7 @@ jobs:
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#bb14a0e562224c53fd6e89bac632853feb1064de" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#3d980136634a4393e9315064d3f507af99addc6f" # trial: unreleased branch
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -228,6 +236,9 @@ jobs:
 
   publish:
     needs: [gate, iterate]
+    # The finalizer: runs whether the iteration succeeded or not, so a failed or timed-out model leaves an
+    # `error` status, never the pending the gate set or an older green.
+    if: always() && needs.gate.result == 'success' && needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # No model runs here, and nothing the model wrote runs here: the bundle is fetched and checked, never executed.
@@ -241,19 +252,22 @@ jobs:
       BRANCH: ${{ needs.gate.outputs.branch }}
       BASE: ${{ needs.gate.outputs.base }}
       H0: ${{ needs.gate.outputs.head }}
+      ITERATED: ${{ needs.iterate.result }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       # Paths that run without review: CI, git and editor hooks, package manager config, manifests and lockfiles.
       # Matched case-insensitively.
-      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*[._-]lock(b|file)?([._-][^/]*)?|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$' }}
+      DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*\.lockb?|[^/]*[._-]lock\.(json|ya?ml|hcl|toml)|[^/]*\.lockfile|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$' }}
       SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
     steps:
-      - uses: actions/download-artifact@v4
+      - if: env.ITERATED == 'success'
+        uses: actions/download-artifact@v4
         id: handoff
         continue-on-error: true # no artifact: the iteration wrote nothing
         with:
           name: shepherd-handoff
           path: handoff
-      - uses: actions/checkout@v4
+      - if: env.ITERATED == 'success'
+        uses: actions/checkout@v4
         with:
           ref: ${{ needs.gate.outputs.branch }}
           fetch-depth: 0
@@ -262,10 +276,11 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
       - shell: bash
         run: |
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#bb14a0e562224c53fd6e89bac632853feb1064de" # trial: unreleased branch
+          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#3d980136634a4393e9315064d3f507af99addc6f" # trial: unreleased branch
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Push the handed-off commits
         id: push
+        if: env.ITERATED == 'success'
         working-directory: repo
         shell: bash # -eo pipefail
         env:
@@ -297,9 +312,19 @@ jobs:
           [ -z "$bad" ] || refuse "the fixes touch protected paths: $bad"
           git -c core.hooksPath=/dev/null push origin "$new:refs/heads/$BRANCH"
           { echo "head=$new"; echo "pushed=$(git rev-list --count "$H0..$new")"; } >> "$GITHUB_OUTPUT"
+      - name: Report a stopped iteration
+        id: stopped
+        if: env.ITERATED != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "shepherd iteration ${ITERATED}; comment /shepherd to retry" > description.txt
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$H0" -f context=shepherd -f state=error -f description="$(cat description.txt)" -f target_url="$RUN_URL" >/dev/null
+          echo "state=error" >> "$GITHUB_OUTPUT"
       - name: Set the shepherd status
         id: status
-        if: steps.push.outputs.stale != 'true'
+        if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ steps.push.outputs.head }}
@@ -326,7 +351,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
           echo "state=$state" >> "$GITHUB_OUTPUT"
       - name: Rerun the jobs ci-repair asked for
-        if: steps.push.outputs.stale != 'true' && hashFiles('handoff/rerun-jobs.txt') != ''
+        if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/rerun-jobs.txt') != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -341,11 +366,11 @@ jobs:
             fi
           done
       - name: Notify
-        if: steps.status.outcome == 'success' # from the workspace, not the PR checkout
+        if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success' # from the workspace, not the PR checkout
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ steps.push.outputs.head }}
-          STATE: ${{ steps.status.outputs.state }}
+          HEAD_SHA: ${{ steps.push.outputs.head || needs.gate.outputs.head }}
+          STATE: ${{ steps.status.outputs.state || steps.stopped.outputs.state }}
           SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }}
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
         run: shepherd notify --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --state "$STATE" --file description.txt
