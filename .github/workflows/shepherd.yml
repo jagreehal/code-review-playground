@@ -105,7 +105,7 @@ jobs:
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
           SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#525eb0d9ac38c8c79b3e4091d6349049f945be3b" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#f9042c48e57f49199babf3aa77b8e79391a60dce" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Start an iteration on each PR still pending
         env:
@@ -175,7 +175,7 @@ jobs:
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
           SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#525eb0d9ac38c8c79b3e4091d6349049f945be3b" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#f9042c48e57f49199babf3aa77b8e79391a60dce" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Decide whether this iteration is worth running
         id: gate
@@ -284,7 +284,7 @@ jobs:
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "github:jagreehal/shepherd#525eb0d9ac38c8c79b3e4091d6349049f945be3b" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#f9042c48e57f49199babf3aa77b8e79391a60dce" # trial: the PR commit
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -335,6 +335,8 @@ jobs:
           # Swarm's first wave, listed before any PR code runs: each lens extracted from the default branch, and none
           # left to the model to remember. A team lens that resolves nowhere is named here and ends could_not_run.
           shepherd fanout --base "origin/$BASE" > "$SHEPHERD_FANOUT" || echo "::warning::a team lens resolves nowhere; see above"
+          jq -e --arg h "$(git rev-parse HEAD)" '.head_sha == $h and any(.lenses[]; .lens == "correctness")' "$SHEPHERD_FANOUT" >/dev/null \
+            || { echo "::error::shepherd fanout wrote no usable lens list for this head"; exit 1; }
           opencode run --auto -m "$model" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
           SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. Swarm's first wave is in $SHEPHERD_FANOUT: dispatch
           the router and every lens listed there in one message. You are running in GitHub Actions on the PR branch,
@@ -527,7 +529,7 @@ jobs:
       - if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success'
         shell: bash
         run: |
-          bun add -g "github:jagreehal/shepherd#525eb0d9ac38c8c79b3e4091d6349049f945be3b" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#f9042c48e57f49199babf3aa77b8e79391a60dce" # trial: the PR commit
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Notify
         if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success' # from the workspace, not the PR checkout
