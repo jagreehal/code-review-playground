@@ -52,8 +52,8 @@ on:
       pr:
         description: PR number
         required: true
-      comment:
-        description: run as a /shepherd comment does, past a finished head and the label scope
+      asked:
+        description: a person asked, by /shepherd comment or the handoff label; runs past a finished head and the label scope
         type: boolean
         default: false
   schedule:
@@ -64,14 +64,14 @@ permissions:
 
 # One run per PR at a time, gate to publish, so a run's statuses never interleave with another's. The condition
 # is the gate's `if` verbatim (a test keeps them in step): a run that event alone rules out gets a group of its
-# own. So does every `/shepherd` comment: GitHub keeps one waiting run per group, and a comment from someone who
-# cannot push must never take a queued run's place. The gate checks the commenter and dispatches a run that queues
-# in the PR's group. A run the gate step skips after reading GitHub (finished head, label scope, incident branch)
-# still queues there.
+# own. So does every `/shepherd` comment and label event: GitHub keeps one waiting run per group, and a comment
+# from someone who cannot push, or a label that is not the handoff label, must never take a queued run's place.
+# The gate checks the commenter or the label and dispatches a run that queues in the PR's group. A run the gate
+# step skips after reading GitHub (finished head, incident branch) still queues there.
 concurrency:
   group: >-
     ${{ github.event_name == 'schedule' && 'shepherd-sweep'
-      || (((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'pull_request_target' && (vars.SHEPHERD_LABEL == '' || github.event.label.name == vars.SHEPHERD_LABEL)) || github.event_name == 'workflow_dispatch') && format('shepherd-{0}', github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr))
+      || (((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null && github.event.workflow_run.head_repository.full_name == github.repository) || github.event_name == 'workflow_dispatch') && format('shepherd-{0}', github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr))
       || format('shepherd-skip-{0}', github.run_id) }}
   cancel-in-progress: false # a run may be mid-handoff; later triggers queue, and GitHub keeps only the newest
 
@@ -142,7 +142,7 @@ jobs:
       contents: read
       pull-requests: read
       statuses: write # pending before the model starts
-      actions: write # a /shepherd comment dispatches the run that queues in the PR's group
+      actions: write # a /shepherd comment or the handoff label dispatches the run that queues in the PR's group
     outputs:
       run: ${{ steps.gate.outputs.run }}
       branch: ${{ steps.gate.outputs.branch }}
@@ -182,7 +182,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
           COMMENTER: ${{ github.event.comment.user.login }}
-          COMMENT: ${{ inputs.comment }}
+          ASKED: ${{ inputs.asked }}
           DISPATCH_TOKEN: ${{ github.token }}
           EVENT_LABEL: ${{ github.event.label.name }}
           LABEL: ${{ steps.settings.outputs.label }}
@@ -192,18 +192,19 @@ jobs:
           pr=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json state,author,headRefOid,headRefName,baseRefName,isCrossRepository,isDraft,labels,commits)
           state=$(jq -r .state <<<"$pr"); head=$(jq -r .headRefOid <<<"$pr"); author=$(jq -r .author.login <<<"$pr"); branch=$(jq -r .headRefName <<<"$pr")
           skip() { echo "skip: $1"; echo "run=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          dispatch() { GH_TOKEN=$DISPATCH_TOKEN gh workflow run "$(basename "${GITHUB_WORKFLOW_REF%@*}")" -R "$GITHUB_REPOSITORY" -f pr="$PR" -f asked=true; skip "dispatched a run for $1, queued behind any run on #$PR"; }
           # Every label event reaches the gate, since the label may come from config; only the handoff label counts.
           if [ "$GITHUB_EVENT_NAME" = pull_request_target ] && { [ -z "$LABEL" ] || [ "$EVENT_LABEL" != "$LABEL" ]; }; then skip "label ${EVENT_LABEL:-?} is not the handoff label${LABEL:+ ($LABEL)}"; fi
+          [ "$GITHUB_EVENT_NAME" != pull_request_target ] || dispatch "the $LABEL label"
           # A /shepherd comment counts from someone who could push. author_association calls a private org member, or
           # someone with access only through a team, CONTRIBUTOR; the permission API sees their effective access.
           if [ "$GITHUB_EVENT_NAME" = issue_comment ]; then
             perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$COMMENTER/permission" --jq .permission 2>/dev/null || echo none)
             case "$perm" in admin|maintain|write) ;; *) skip "commenter $COMMENTER has $perm access" ;; esac
-            GH_TOKEN=$DISPATCH_TOKEN gh workflow run "$(basename "${GITHUB_WORKFLOW_REF%@*}")" -R "$GITHUB_REPOSITORY" -f pr="$PR" -f comment=true
-            skip "dispatched a run for $COMMENTER's /shepherd, queued behind any run on #$PR"
+            dispatch "$COMMENTER's /shepherd"
           fi
-          commented=false
-          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$COMMENT" = true ] && commented=true
+          asked=false
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$ASKED" = true ] && asked=true
           [ "$state" = OPEN ] || skip "PR is $state"
           [ "$(jq -r .isCrossRepository <<<"$pr")" = false ] || skip "fork PR"
           [ "$(jq -r .isDraft <<<"$pr")" = false ] || skip "draft"
@@ -212,15 +213,15 @@ jobs:
           labelled=false
           [ -n "$LABEL" ] && jq -e --arg l "$LABEL" 'any(.labels[]; .name == $l)' <<<"$pr" >/dev/null && labelled=true
           # A label scopes the automatic triggers; a /shepherd comment always runs.
-          if [ -n "$LABEL" ] && [ "$commented" = false ] && [ "$labelled" = false ]; then skip "no $LABEL label"; fi
+          if [ -n "$LABEL" ] && [ "$asked" = false ] && [ "$labelled" = false ]; then skip "no $LABEL label"; fi
           # An incident fix was written by an agent from alert text. A person starts shepherd on it.
-          if [[ "$branch" == incident/* ]] && [ "$commented" = false ] && [ "$labelled" = false ]; then
+          if [[ "$branch" == incident/* ]] && [ "$asked" = false ] && [ "$labelled" = false ]; then
             skip "incident fix: comment /shepherd${LABEL:+ or add the $LABEL label} to start"
           fi
           # Only PRs by people who could push this code themselves: shepherd runs their checks with these secrets.
           perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$author/permission" --jq .permission 2>/dev/null || echo none)
           case "$perm" in admin|maintain|write) ;; *) skip "author $author has $perm access" ;; esac
-          if [ "$GITHUB_EVENT_NAME" = workflow_run ] || { [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_ACTOR" = "github-actions[bot]" ] && [ "$commented" = false ]; }; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ] || { [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_ACTOR" = "github-actions[bot]" ] && [ "$asked" = false ]; }; then
             done=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" --jq '[.statuses[] | select(.context=="shepherd")][0].state // ""')
             case "$done" in success|failure|error) skip "shepherd already finished on $head ($done); comment /shepherd to run again" ;; esac
             # The sweep dispatched this run for a pending head; a run that finished it while this one queued wins.
