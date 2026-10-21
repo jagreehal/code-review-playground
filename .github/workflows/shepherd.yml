@@ -105,7 +105,7 @@ jobs:
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
           SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#89ca82081d9a1b9bfee76968fe4b4243f04f1283" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#525eb0d9ac38c8c79b3e4091d6349049f945be3b" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Start an iteration on each PR still pending
         env:
@@ -175,7 +175,7 @@ jobs:
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
           SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#89ca82081d9a1b9bfee76968fe4b4243f04f1283" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#525eb0d9ac38c8c79b3e4091d6349049f945be3b" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Decide whether this iteration is worth running
         id: gate
@@ -284,7 +284,7 @@ jobs:
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "github:jagreehal/shepherd#89ca82081d9a1b9bfee76968fe4b4243f04f1283" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#525eb0d9ac38c8c79b3e4091d6349049f945be3b" # trial: the PR commit
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -300,6 +300,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHEPHERD_HANDOFF: ${{ runner.temp }}/handoff
+          SHEPHERD_FANOUT: ${{ runner.temp }}/fanout.json
+          BASE: ${{ needs.gate.outputs.base }}
           SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -330,8 +332,12 @@ jobs:
           keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
           for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do { [ -n "${!k:-}" ] && [[ "$keys" == *" $k "* ]]; } || unset "$k"; done
           OPENCODE_CONFIG_CONTENT=$(jq -c .opencode <<<"$plan") && export OPENCODE_CONFIG_CONTENT
+          # Swarm's first wave, listed before any PR code runs: each lens extracted from the default branch, and none
+          # left to the model to remember. A team lens that resolves nowhere is named here and ends could_not_run.
+          shepherd fanout --base "origin/$BASE" > "$SHEPHERD_FANOUT" || echo "::warning::a team lens resolves nowhere; see above"
           opencode run --auto -m "$model" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
-          SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. You are running in GitHub Actions on the PR branch,
+          SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. Swarm's first wave is in $SHEPHERD_FANOUT: dispatch
+          the router and every lens listed there in one message. You are running in GitHub Actions on the PR branch,
           already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
           would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further
           iterations; the next one starts when CI or stamp finishes on the head the workflow pushes."
@@ -488,7 +494,8 @@ jobs:
               text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"[image removed: \1]", text)
               return re.sub(r"(?<![\w`/])@(?=[A-Za-z0-9])", "@​", text)
           raw = open(sys.argv[1], "rb").read(CAP + 1)
-          text = defuse(raw[:CAP].decode("utf-8", "replace"))
+          # The header goes on once, below: drop any copy the model wrote into the file.
+          text = defuse(re.sub(r"^> 🤖 Automated comment by .*\n?", "", raw[:CAP].decode("utf-8", "replace"), flags=re.M))
           if len(raw) > CAP:
               text += "\n\n_(truncated)_"
           # The summary it replaces keeps its rounds: its latest folds into one history line, as swarm does.
@@ -520,7 +527,7 @@ jobs:
       - if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success'
         shell: bash
         run: |
-          bun add -g "github:jagreehal/shepherd#89ca82081d9a1b9bfee76968fe4b4243f04f1283" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#525eb0d9ac38c8c79b3e4091d6349049f945be3b" # trial: the PR commit
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Notify
         if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success' # from the workspace, not the PR checkout
