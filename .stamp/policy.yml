@@ -9,6 +9,8 @@ version: 1
 model: "bedrock:minimax.minimax-m2.5"
 provider:
   region: "eu-west-1"
+pricing:
+  minimax.minimax-m2.5: { inputPer1M: 0.36, outputPer1M: 1.44 } # Bedrock eu-west-1
 
 # Settings. Each is optional; a non-blank environment variable of the same meaning overrides it (STAMP_MODEL,
 # AWS_REGION, STAMP_GUARD, ...), and `stamp config` shows every value in effect and where it came from.
