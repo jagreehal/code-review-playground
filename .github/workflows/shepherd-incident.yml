@@ -67,7 +67,7 @@ jobs:
       - shell: bash # -eo pipefail: a failed download fails here, not three steps later
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "github:jagreehal/shepherd#f0ba5c95b8c26debab8b537b3e7de16e741b6499" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#b26ef7af104f4e5f5a269b71052bb1d0d718c49c" # trial: the PR commit
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install
@@ -166,7 +166,7 @@ jobs:
           GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
           INCIDENT_PATHS: ${{ vars.INCIDENT_PATHS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#f0ba5c95b8c26debab8b537b3e7de16e741b6499" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#b26ef7af104f4e5f5a269b71052bb1d0d718c49c" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
 
   open:
