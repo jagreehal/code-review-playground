@@ -52,6 +52,10 @@ on:
       pr:
         description: PR number
         required: true
+      comment:
+        description: run as a /shepherd comment does, past a finished head and the label scope
+        type: boolean
+        default: false
   schedule:
     - cron: "*/30 * * * *" # the sweep: PRs left pending with nothing to wake them (bot reviews, a lost event)
 
@@ -60,13 +64,14 @@ permissions:
 
 # One run per PR at a time, gate to publish, so a run's statuses never interleave with another's. The condition
 # is the gate's `if` verbatim (a test keeps them in step): a run that event alone rules out gets a group of its
-# own, and so does a `/shepherd` comment from an account with no tie to the repository. A run the gate step skips
-# after reading GitHub (finished head, label scope, incident branch, a commenter who cannot push) still queues in
-# the PR's group, where GitHub keeps one waiting run, so a later event can take a queued `/shepherd`'s place.
+# own. So does every `/shepherd` comment: GitHub keeps one waiting run per group, and a comment from someone who
+# cannot push must never take a queued run's place. The gate checks the commenter and dispatches a run that queues
+# in the PR's group. A run the gate step skips after reading GitHub (finished head, label scope, incident branch)
+# still queues there.
 concurrency:
   group: >-
     ${{ github.event_name == 'schedule' && 'shepherd-sweep'
-      || (((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/shepherd') && !contains(fromJSON('["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]'), github.event.comment.author_association)) || (github.event_name == 'pull_request_target' && (vars.SHEPHERD_LABEL == '' || github.event.label.name == vars.SHEPHERD_LABEL)) || github.event_name == 'workflow_dispatch') && format('shepherd-{0}', github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr))
+      || (((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'pull_request_target' && (vars.SHEPHERD_LABEL == '' || github.event.label.name == vars.SHEPHERD_LABEL)) || github.event_name == 'workflow_dispatch') && format('shepherd-{0}', github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr))
       || format('shepherd-skip-{0}', github.run_id) }}
   cancel-in-progress: false # a run may be mid-handoff; later triggers queue, and GitHub keeps only the newest
 
@@ -100,7 +105,7 @@ jobs:
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
           SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#b8e5d66d16b4367530175f7250d30e35f9b90260" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#f0ba5c95b8c26debab8b537b3e7de16e741b6499" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Start an iteration on each PR still pending
         env:
@@ -127,8 +132,7 @@ jobs:
         && github.event.workflow_run.pull_requests[0] != null
         && github.event.workflow_run.head_repository.full_name == github.repository)
       || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null
-        && startsWith(github.event.comment.body, '/shepherd')
-        && !contains(fromJSON('["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]'), github.event.comment.author_association))
+        && startsWith(github.event.comment.body, '/shepherd'))
       || (github.event_name == 'pull_request_target'
         && (vars.SHEPHERD_LABEL == '' || github.event.label.name == vars.SHEPHERD_LABEL))
       || github.event_name == 'workflow_dispatch'
@@ -138,6 +142,7 @@ jobs:
       contents: read
       pull-requests: read
       statuses: write # pending before the model starts
+      actions: write # a /shepherd comment dispatches the run that queues in the PR's group
     outputs:
       run: ${{ steps.gate.outputs.run }}
       branch: ${{ steps.gate.outputs.branch }}
@@ -170,13 +175,15 @@ jobs:
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
           SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#b8e5d66d16b4367530175f7250d30e35f9b90260" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#f0ba5c95b8c26debab8b537b3e7de16e741b6499" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Decide whether this iteration is worth running
         id: gate
         env:
           GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
           COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENT: ${{ inputs.comment }}
+          DISPATCH_TOKEN: ${{ github.token }}
           EVENT_LABEL: ${{ github.event.label.name }}
           LABEL: ${{ steps.settings.outputs.label }}
           MAX_SHEPHERD_COMMITS: ${{ steps.settings.outputs.max_commits }}
@@ -192,7 +199,11 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = issue_comment ]; then
             perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$COMMENTER/permission" --jq .permission 2>/dev/null || echo none)
             case "$perm" in admin|maintain|write) ;; *) skip "commenter $COMMENTER has $perm access" ;; esac
+            GH_TOKEN=$DISPATCH_TOKEN gh workflow run "$(basename "${GITHUB_WORKFLOW_REF%@*}")" -R "$GITHUB_REPOSITORY" -f pr="$PR" -f comment=true
+            skip "dispatched a run for $COMMENTER's /shepherd, queued behind any run on #$PR"
           fi
+          commented=false
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$COMMENT" = true ] && commented=true
           [ "$state" = OPEN ] || skip "PR is $state"
           [ "$(jq -r .isCrossRepository <<<"$pr")" = false ] || skip "fork PR"
           [ "$(jq -r .isDraft <<<"$pr")" = false ] || skip "draft"
@@ -201,15 +212,15 @@ jobs:
           labelled=false
           [ -n "$LABEL" ] && jq -e --arg l "$LABEL" 'any(.labels[]; .name == $l)' <<<"$pr" >/dev/null && labelled=true
           # A label scopes the automatic triggers; a /shepherd comment always runs.
-          if [ -n "$LABEL" ] && [ "$GITHUB_EVENT_NAME" != issue_comment ] && [ "$labelled" = false ]; then skip "no $LABEL label"; fi
+          if [ -n "$LABEL" ] && [ "$commented" = false ] && [ "$labelled" = false ]; then skip "no $LABEL label"; fi
           # An incident fix was written by an agent from alert text. A person starts shepherd on it.
-          if [[ "$branch" == incident/* ]] && [ "$GITHUB_EVENT_NAME" != issue_comment ] && [ "$labelled" = false ]; then
+          if [[ "$branch" == incident/* ]] && [ "$commented" = false ] && [ "$labelled" = false ]; then
             skip "incident fix: comment /shepherd${LABEL:+ or add the $LABEL label} to start"
           fi
           # Only PRs by people who could push this code themselves: shepherd runs their checks with these secrets.
           perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$author/permission" --jq .permission 2>/dev/null || echo none)
           case "$perm" in admin|maintain|write) ;; *) skip "author $author has $perm access" ;; esac
-          if [ "$GITHUB_EVENT_NAME" = workflow_run ] || { [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; }; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ] || { [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_ACTOR" = "github-actions[bot]" ] && [ "$commented" = false ]; }; then
             done=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" --jq '[.statuses[] | select(.context=="shepherd")][0].state // ""')
             case "$done" in success|failure|error) skip "shepherd already finished on $head ($done); comment /shepherd to run again" ;; esac
             # The sweep dispatched this run for a pending head; a run that finished it while this one queued wins.
@@ -272,7 +283,7 @@ jobs:
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "github:jagreehal/shepherd#b8e5d66d16b4367530175f7250d30e35f9b90260" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#f0ba5c95b8c26debab8b537b3e7de16e741b6499" # trial: the PR commit
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -508,7 +519,7 @@ jobs:
       - if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success'
         shell: bash
         run: |
-          bun add -g "github:jagreehal/shepherd#b8e5d66d16b4367530175f7250d30e35f9b90260" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#f0ba5c95b8c26debab8b537b3e7de16e741b6499" # trial: the PR commit
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Notify
         if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success' # from the workspace, not the PR checkout
