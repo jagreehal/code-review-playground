@@ -105,7 +105,7 @@ jobs:
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
           SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#b26ef7af104f4e5f5a269b71052bb1d0d718c49c" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#89ca82081d9a1b9bfee76968fe4b4243f04f1283" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Start an iteration on each PR still pending
         env:
@@ -175,7 +175,7 @@ jobs:
           SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
           SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
-          bun add -g "github:jagreehal/shepherd#b26ef7af104f4e5f5a269b71052bb1d0d718c49c" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#89ca82081d9a1b9bfee76968fe4b4243f04f1283" # trial: the PR commit
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Decide whether this iteration is worth running
         id: gate
@@ -283,7 +283,7 @@ jobs:
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "github:jagreehal/shepherd#b26ef7af104f4e5f5a269b71052bb1d0d718c49c" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#89ca82081d9a1b9bfee76968fe4b4243f04f1283" # trial: the PR commit
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install   # skills to ~/.claude/skills, where opencode finds them
@@ -519,7 +519,7 @@ jobs:
       - if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success'
         shell: bash
         run: |
-          bun add -g "github:jagreehal/shepherd#b26ef7af104f4e5f5a269b71052bb1d0d718c49c" # trial: the PR commit
+          bun add -g "github:jagreehal/shepherd#89ca82081d9a1b9bfee76968fe4b4243f04f1283" # trial: the PR commit
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Notify
         if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success' # from the workspace, not the PR checkout
