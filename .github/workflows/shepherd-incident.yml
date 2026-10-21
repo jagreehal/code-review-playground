@@ -16,8 +16,9 @@
 # CI on the PR installs and runs them), then opens the PR. The agent still holds the model key.
 #
 # Secrets:   SHEPHERD_TOKEN (contents, pull requests: write) for `open`, so the fix PR starts CI and stamp;
-#            with github.token the PR opens but no workflow runs on it. OPENCODE_API_KEY for the model.
-# Variables: SHEPHERD_MODEL (provider/model), INCIDENT_PATHS (extended regex; empty = ^src/).
+#            with github.token the PR opens but no workflow runs on it. SHEPHERD_API_KEY (or the provider's own key) for the model.
+# Variables: SHEPHERD_MODEL (optional override of the team's models.loop in .shepherd/config.yml, else its top rung), AWS_REGION (Bedrock),
+#            INCIDENT_PATHS (ci.incident_paths in .shepherd/config.yml; the variable overrides it; empty = ^src/).
 name: shepherd-incident
 on:
   workflow_run:
@@ -41,9 +42,10 @@ jobs:
         && github.event.workflow_run.head_branch == github.event.repository.default_branch)
       || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
+    environment: ai-review # the model keys are this environment's secrets: no other job reads them
     timeout-minutes: 45
-    # On the job, not the workflow: every green CI run starts this workflow only to skip, and at workflow level
-    # that skip took the one pending slot from a real incident. One at a time, so a repeat signal dedupes.
+    # On the job, not the workflow: every green CI run starts this workflow and skips, and a workflow-level group
+    # would hand that skip the one pending slot a real incident needs. One at a time, so a repeat signal dedupes.
     concurrency:
       group: shepherd-incident
       cancel-in-progress: false
@@ -52,7 +54,7 @@ jobs:
       issues: write
       actions: read
     env:
-      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: 0.6.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,14 +62,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the model key
-      - uses: actions/setup-node@v4 # no cache: this job runs the model
-        with:
-          node-version: 24
-      - run: npm ci --ignore-scripts
+      # Install your project's dependencies here so the reproducing test can run, with install scripts off and no
+      # dependency cache (npm ci --ignore-scripts; setup-node without `cache:`): this job runs the model.
       - shell: bash # -eo pipefail: a failed download fails here, not three steps later
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "@jagreehal/shepherd@github:jagreehal/shepherd#33b299fe13d6984bd40b450dc3ac9f9488dface1" # trial: unreleased branch
+          bun add -g "github:jagreehal/shepherd#b8e5d66d16b4367530175f7250d30e35f9b90260" # trial: the PR commit
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install
@@ -89,13 +89,39 @@ jobs:
         timeout-minutes: 20 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
           GH_TOKEN: ${{ github.token }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
+          SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ vars.AWS_REGION }} # overrides ci.aws_region, for a bedrock: model
+          SHEPHERD_MODEL: ${{ vars.SHEPHERD_MODEL }} # a model or tier; empty = the team's models.loop, top rung, or the default
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           OPENCODE_DISABLE_PROJECT_CONFIG: "1"
           OPENCODE_DISABLE_AUTOUPDATE: "1"
-          MODEL: ${{ vars.SHEPHERD_MODEL || 'opencode-go/kimi-k3' }}
           HANDOFF: ${{ runner.temp }}/handoff
         run: |
-          opencode run --auto -m "$MODEL" --title "incident" "Load the incident skill and run it on the signal in $RUNNER_TEMP/signal.txt
+          # The team's models, from the default branch: the session model, the variable its key goes in, and the
+          # OpenCode agents that carry the ladder and pins, so each runner gets its own model.
+          plan=$(shepherd ci-models)
+          AWS_REGION=$(shepherd ci-settings | jq -r .aws_region.value) && export AWS_REGION # ci.aws_region, or the variable
+          model=$(jq -r .model <<<"$plan")
+          echo "session model: $model ($(jq -r .source <<<"$plan"))"
+          key_env=$(jq -r '.key_env // empty' <<<"$plan")
+          if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
+          unset SHEPHERD_API_KEY
+          # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
+          # provider's other credentials.
+          keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
+          for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do { [ -n "${!k:-}" ] && [[ "$keys" == *" $k "* ]]; } || unset "$k"; done
+          OPENCODE_CONFIG_CONTENT=$(jq -c .opencode <<<"$plan") && export OPENCODE_CONFIG_CONTENT
+          opencode run --auto -m "$model" --title "incident" "Load the incident skill and run it on the signal in $RUNNER_TEMP/signal.txt
           (a run URL, or an error or alert text).
           You are running in GitHub Actions on the default branch, already checked out, with no push access.
           At Step 6 do not push or open the PR: commit on incident/<issue>, write the PR title to $HANDOFF/pr-title.txt
@@ -115,11 +141,39 @@ jobs:
           path: ${{ runner.temp }}/handoff
           if-no-files-found: ignore
 
-  open:
+  # The paths a fix may change, resolved in a job with no model and no secret: the model cannot choose them.
+  settings:
     needs: investigate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      incident_paths: ${{ steps.settings.outputs.incident_paths }}
     env:
-      INCIDENT_PATHS: ${{ vars.INCIDENT_PATHS || '^src/' }} # extended regex every changed path must match
+      SHEPHERD_VERSION: 0.6.0 # pinned, as in investigate
+    steps:
+      # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch || github.ref_name }}
+          sparse-checkout: .shepherd
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Settings
+        id: settings
+        env:
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+          GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
+          INCIDENT_PATHS: ${{ vars.INCIDENT_PATHS }}
+        run: |
+          bun add -g "github:jagreehal/shepherd#b8e5d66d16b4367530175f7250d30e35f9b90260" # trial: the PR commit
+          "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
+
+  open:
+    needs: [investigate, settings]
+    runs-on: ubuntu-latest
+    env:
+      INCIDENT_PATHS: ${{ needs.settings.outputs.incident_paths }} # extended regex every changed path must match
     permissions:
       contents: write
       pull-requests: write

@@ -1,3 +1,5 @@
+models:
+  loop: bedrock:minimax.minimax-m2.5
 lenses:
   react:
     skill: .agents/skills/react-best-practices
@@ -11,4 +13,9 @@ lenses:
   robustness:
     skill: .shepherd/lenses/robustness
     applies_to:
-      - "src/**/*.ts"
+      - src/**/*.ts
+fixes:
+  mode: suggest
+ci:
+  label: shepherd
+  aws_region: eu-west-1
