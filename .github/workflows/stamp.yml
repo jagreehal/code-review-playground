@@ -76,11 +76,11 @@ jobs:
       #aws-oidc     role-to-assume: ${{ vars.AWS_ROLE_ARN }}
       #aws-oidc     aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds model keys
-      # Trial: stamp straight from jagreehal/stamp#31, no npm publish. Pinned: this job holds the model key.
+      # Trial: stamp straight from jagreehal/stamp feat/dx-202610220709, no npm publish. Pinned: this job holds the model key.
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/stamp
-          ref: 894a5487de6327614690564950b71968e44f75ec
+          ref: 4496dcbb43e12b4b8e8f97d4acb79219be8ed369
           path: .stamp-tool
           persist-credentials: false
       - run: bun install --frozen-lockfile --cwd .stamp-tool

@@ -12,6 +12,8 @@
     "format": "vp fmt"
   },
   "devDependencies": {
+    "executable-stories-formatters": "file:vendor/executable-stories-formatters-1.29.0.tgz",
+    "executable-stories-vitest": "^8.11.3",
     "typescript": "^6.0.3",
     "vite-plus": "^0.1.21",
     "vitest": "^4.1.9"

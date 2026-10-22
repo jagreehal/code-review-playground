@@ -128,3 +128,8 @@ reviewer_bots: ['greptile-apps[bot]', 'coderabbitai[bot]', 'chatgpt-codex-connec
 
 # Review services that report as a check run on the head; stamp waits while one is queued or running.
 reviewer_checks: ['Claude Code Review']
+
+# Test evidence: the executable-stories review report ci.yml uploads. Advisory, never a gate.
+stories:
+  workflow: ci.yml
+  artifact: executable-stories
