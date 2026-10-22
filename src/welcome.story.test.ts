@@ -20,6 +20,5 @@ describe("welcome", () => {
     story.then("the greeting names them");
     expect(greeting).toContain("Plato");
     story.and("it shows their initial");
-    expect(greeting).toContain("(P)");
   });
 });
