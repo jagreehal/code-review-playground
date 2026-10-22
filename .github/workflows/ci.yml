@@ -42,3 +42,40 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx vp test run
+  # Test evidence for stamp (`stories:` in .stamp/policy.yml). Runs the base branch's own tests too, so the
+  # review can report scenarios this PR removed, skipped, or made assert less. Plain vitest, not `vp test`:
+  # vite-plus 0.1 runs its own vitest copy, whose assertion counter the story adapter cannot read.
+  stories:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run
+      - name: Run the base branch's stories
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "origin/$BASE"
+          cd "$RUNNER_TEMP/base"
+          npm ci
+          if grep -q executable-stories-vitest package.json; then npx vitest run || true; fi
+      - name: Evidence review
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git diff --name-status "origin/$BASE...HEAD" > "$RUNNER_TEMP/changed.txt"
+          BASELINE=()
+          [ -f "$RUNNER_TEMP/base/reports/raw-run.json" ] && BASELINE=(--baseline "$RUNNER_TEMP/base/reports/raw-run.json")
+          npx executable-stories review reports/raw-run.json --changed-files "$RUNNER_TEMP/changed.txt" \
+            --base-ref "origin/$BASE" --output-dir reports --output-name index "${BASELINE[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: executable-stories
+          path: reports/index.review.json
