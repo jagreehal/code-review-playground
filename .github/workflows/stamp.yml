@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jagreehal/stamp
-          ref: 2c645502940fee387695d6481f125b59055a23f3
+          ref: b5d7e8ede083801c2cf7d215bc0db61d4312659f
           path: .stamp-tool
           persist-credentials: false
       - run: bun install --frozen-lockfile --cwd .stamp-tool
