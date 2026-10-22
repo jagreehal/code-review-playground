@@ -15,7 +15,7 @@ jobs:
   shepherd:
     # The card is ours, and this edit is the one that ticked the box: an unrelated edit of the card does nothing.
     if: >-
-      github.event.issue.pull_request != null && github.event.comment.user.login == 'github-actions[bot]'
+      github.event.issue.pull_request != null && endsWith(github.event.comment.user.login, '[bot]') && startsWith(github.event.comment.body, '<!-- stamp-actions -->')
       && contains(github.event.comment.body, '- [x] <!-- stamp-action:shepherd -->')
       && !contains(github.event.changes.body.from, '- [x] <!-- stamp-action:shepherd -->')
     runs-on: ubuntu-latest
