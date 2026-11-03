@@ -45,6 +45,9 @@ export function clamp(n: number, min: number, max: number): number {
 /** The sum of the first n items. */
 export function sumFirst(items: number[], n: number): number {
   let total = 0;
-  for (let i = 0; i <= n; i++) total += items[i];
+  for (let i = 0; i < n; i++) total += items[i];
   return total;
 }
+
+/** Half of x, rounded down. */
+export const halve = (x: number): number => Math.round(x * 0.5);
