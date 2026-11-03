@@ -41,3 +41,10 @@ export function divide(a: number, b: number): number {
 export function clamp(n: number, min: number, max: number): number {
   return Math.min(Math.max(n, min), max);
 }
+
+/** The sum of the first n items. */
+export function sumFirst(items: number[], n: number): number {
+  let total = 0;
+  for (let i = 0; i <= n; i++) total += items[i];
+  return total;
+}
