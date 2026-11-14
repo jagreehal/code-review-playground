@@ -1,5 +1,5 @@
 models:
-  loop: bedrock:minimax.minimax-m2.5
+  loop: opencode-go/beam-free
 lenses:
   react:
     skill: .agents/skills/react-best-practices
