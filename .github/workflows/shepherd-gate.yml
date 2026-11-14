@@ -61,7 +61,7 @@ jobs:
     environment: ai-review # holds the model key: only this job can read it
     timeout-minutes: 20 # a hung model call must not burn a runner for six hours; a killed run is fail-closed (the approval is already retracted)
     env:
-      SHEPHERD_VERSION: 80bc6033f1befa63fc48527b2bbeed815d6c8c43 # pinned: the engine decides what gets auto-approved, so bumps are deliberate
+      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned: the engine decides what gets auto-approved, so bumps are deliberate
     steps:
       - uses: actions/checkout@v4
         with:

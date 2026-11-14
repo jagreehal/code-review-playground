@@ -80,7 +80,7 @@ jobs:
       pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
-      SHEPHERD_VERSION: 80bc6033f1befa63fc48527b2bbeed815d6c8c43 # pinned, as in iterate
+      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned, as in iterate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
@@ -145,7 +145,7 @@ jobs:
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      SHEPHERD_VERSION: 80bc6033f1befa63fc48527b2bbeed815d6c8c43 # pinned, as in iterate
+      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned, as in iterate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
@@ -253,7 +253,7 @@ jobs:
       statuses: read
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      SHEPHERD_VERSION: 80bc6033f1befa63fc48527b2bbeed815d6c8c43 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned: this runs with the repo's secrets, so bumps are deliberate
     steps:
       - uses: actions/checkout@v4
         with:
@@ -281,6 +281,13 @@ jobs:
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
           mkdir -p "$RUNNER_TEMP/handoff"
+      # A note on the PR while the model works; the finalizer deletes it. Cosmetic, so it never fails the job.
+      - name: Show that shepherd is reviewing
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          H0: ${{ needs.gate.outputs.head }}
+        run: shepherd working --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$H0"
       - name: One shepherd iteration
         timeout-minutes: 30 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
@@ -375,7 +382,7 @@ jobs:
       # Matched case-insensitively.
       DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*\.lockb?|[^/]*[._-]lock\.(json|ya?ml|hcl|toml)|[^/]*\.lockfile|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$|(^|/)\.cargo/|(^|/)(pnpm-workspace\.yaml|pipfile|deno\.jsonc?)$' }}
       DENY_ADD: ${{ needs.gate.outputs.push_deny }} # ci.push_deny: only ever added to DENY
-      SHEPHERD_VERSION: 80bc6033f1befa63fc48527b2bbeed815d6c8c43 # pinned, as in iterate
+      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned, as in iterate
     steps:
       # First, before any setup that could fail: a stopped iteration must never leave the gate's pending standing.
       - name: Report a stopped iteration
@@ -595,6 +602,14 @@ jobs:
           SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }}
           SHEPHERD_NOTIFY_ON: ${{ needs.gate.outputs.notify_on }} # ci.notify_on or the variable
         run: shepherd notify --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --state "$STATE" --file description.txt
+      - name: Remove the reviewing note
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- shepherd-working -->"))) | .id' |
+            while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$id" >/dev/null; done
       # Any step above failing (checkout, push, status) must not leave the gate's pending for the sweep to rerun.
       - name: Report a failed publish
         if: always() && failure()

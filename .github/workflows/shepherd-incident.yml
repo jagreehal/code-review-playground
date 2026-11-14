@@ -54,7 +54,7 @@ jobs:
       issues: write
       actions: read
     env:
-      SHEPHERD_VERSION: 80bc6033f1befa63fc48527b2bbeed815d6c8c43 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned: this runs with the repo's secrets, so bumps are deliberate
     steps:
       - uses: actions/checkout@v4
         with:
@@ -148,7 +148,7 @@ jobs:
     outputs:
       incident_paths: ${{ steps.settings.outputs.incident_paths }}
     env:
-      SHEPHERD_VERSION: 80bc6033f1befa63fc48527b2bbeed815d6c8c43 # pinned, as in investigate
+      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned, as in investigate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
