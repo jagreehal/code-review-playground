@@ -4,6 +4,6 @@ models:
   loop: bedrock/openai.gpt-oss-120b-1:0
 lenses: {}
 fixes:
-  mode: suggest
+  mode: push
 ci:
   aws_region: eu-west-1
