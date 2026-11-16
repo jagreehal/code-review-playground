@@ -37,7 +37,7 @@ export function divide(a: number, b: number): number {
   return a / b;
 }
 
-/** Limits n to the range [min, max]. */
+/** Limits n to the range [min, max], inclusive. */
 export function clamp(n: number, min: number, max: number): number {
   return Math.min(Math.max(n, min), max);
 }
