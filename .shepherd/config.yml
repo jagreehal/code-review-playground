@@ -2,7 +2,11 @@
 # shepherd team policy. Presets: review-only (fixes.mode suggest), local-fix (local), push.
 models:
   loop: bedrock/openai.gpt-oss-120b-1:0
-lenses: {}
+lenses:
+  rust:
+    skill: .shepherd/lenses/rust
+    applies_to: ['**/*.rs']
+    gate: escalate
 fixes:
   mode: suggest
 ci:
