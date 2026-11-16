@@ -6,10 +6,10 @@
 # github.token, after the model returns.
 #
 # Pick a model with the SHEPHERD_MODEL variable (provider/model, e.g. anthropic/claude-opus-5,
-# bedrock/eu.amazon.nova-pro-v1:0, opencode-go/deepseek-v4.1-flash, openai/gpt-5.5) or `model:` in
-# .shepherd/gate.yml, and add that provider's key as a secret under its usual name. Bedrock without a key uses
-# OIDC: `shepherd gate init --aws-oidc` and the AWS_ROLE_ARN variable. Every other setting lives in the policy,
-# read from the default branch; `shepherd gate config` prints what is in effect.
+# bedrock/eu.amazon.nova-pro-v1:0, opencode-go/deepseek-v4.1-flash, openai/gpt-5.5) or `review.model` in
+# .shepherd/config.yml, and add that provider's key as a secret under its usual name. Bedrock without a key uses
+# OIDC: `shepherd gate init --aws-oidc` and the AWS_ROLE_ARN variable. Every other setting lives under review: in
+# .shepherd/config.yml, read from the default branch; `shepherd gate config` prints what is in effect.
 name: shepherd
 on:
   # `/review` (or `/gate`) in a PR comment reviews the head again.
@@ -30,8 +30,9 @@ concurrency:
   cancel-in-progress: true # a newer head supersedes the review in flight
 
 permissions:
-  # Resolving a review thread needs contents write. The model cannot use it: it runs nothing and holds no token.
-  contents: write
+  # The review job holds the model keys and installs shepherd's dependencies, so it cannot change code. Resolving a
+  # thread needs contents write: the settle job below has it, with no keys and nothing installed.
+  contents: read
   pull-requests: write
   statuses: write # the shepherd check
   # Reads the PR's reactions (the issues API serves them) to wait for reviewer bots still at work.
@@ -55,6 +56,13 @@ jobs:
           && (startsWith(github.event.comment.body, '/review') || startsWith(github.event.comment.body, '/gate')))
     runs-on: ubuntu-latest
     environment: ai-review # holds the model key: only this job can read it
+    outputs:
+      head: ${{ steps.settle.outputs.head }}
+      retire: ${{ steps.settle.outputs.retire }}
+      approved: ${{ steps.settle.outputs.approved }}
+      open: ${{ steps.settle.outputs.open }}
+      state: ${{ steps.settle.outputs.state }}
+      description: ${{ steps.settle.outputs.description }}
     timeout-minutes: 20 # a hung model call must not burn a runner for six hours; a killed run leaves the check pending
     env:
       SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.20.0' }} # pinned: the engine decides the verdict, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
@@ -73,7 +81,7 @@ jobs:
       #aws-oidc     role-to-assume: ${{ vars.AWS_ROLE_ARN }}
       #aws-oidc     aws-region: ${{ vars.AWS_REGION }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds model keys
-      - run: bunx "@jagreehal/shepherd@$SHEPHERD_VERSION" gate "$PR" --post --json "$RUNNER_TEMP/gate.json"
+      - run: bunx "@jagreehal/shepherd@$SHEPHERD_VERSION" gate "$PR" --post --json "$RUNNER_TEMP/gate.json" --settle "$RUNNER_TEMP/settle.json"
         env:
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}
@@ -101,8 +109,63 @@ jobs:
           ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
+      # The threads to resolve and the check, for the settle job. Read as data: every field is checked before it is an output.
+      - id: settle
+        run: |
+          f="$RUNNER_TEMP/settle.json"
+          [ -f "$f" ] || exit 0
+          jq -e '(.head | test("^[0-9a-f]{40}$")) and (.retire | all(test("^PRRT_[A-Za-z0-9_-]+$"))) and (.approved | type == "boolean") and (.open | type == "number") and (.check.state | IN("success", "failure", "pending", "error"))' "$f" >/dev/null
+          {
+            echo "head=$(jq -r .head "$f")"
+            echo "retire=$(jq -r '.retire | join(" ")' "$f")"
+            echo "approved=$(jq -r .approved "$f")"
+            echo "open=$(jq -r .open "$f")"
+            echo "state=$(jq -r .check.state "$f")"
+            echo "description=$(jq -r .check.description "$f" | tr -d '\000-\037' | cut -c1-139)"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: gate-evidence-${{ github.event.pull_request.number || github.event.issue.number }}
           path: ${{ runner.temp }}/gate.json
+
+  # Resolves the threads the review settled and sets the check. Contents write lives here, apart from the model keys:
+  # no checkout, no install, only the gh that ships on the runner. Each thread is read again just before it resolves,
+  # and one anyone else replied to stays open and counts against an approval.
+  settle:
+    needs: review
+    if: needs.review.outputs.head != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # GitHub requires it to resolve a review thread
+      pull-requests: write
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEAD_SHA: ${{ needs.review.outputs.head }}
+      RETIRE: ${{ needs.review.outputs.retire }}
+      APPROVED: ${{ needs.review.outputs.approved }}
+      OPEN: ${{ needs.review.outputs.open }}
+      STATE: ${{ needs.review.outputs.state }}
+      DESCRIPTION: ${{ needs.review.outputs.description }}
+    steps:
+      - name: Resolve the settled threads and set the check
+        run: |
+          left=0
+          for id in $RETIRE; do
+            t=$(gh api graphql -f query='query($id:ID!){node(id:$id){... on PullRequestReviewThread{isResolved comments(first:50){totalCount nodes{author{login __typename} body}}}}}' -f id="$id") || { left=$((left + 1)); continue; }
+            jq -e '.data.node.isResolved' <<<"$t" >/dev/null && continue
+            # Shepherd's alone, read whole: every comment from the Actions bot, carrying the review's run marker.
+            if jq -e '.data.node.comments | .totalCount == (.nodes | length) and (.nodes | length) > 0 and all(.nodes[]; .author.__typename == "Bot" and .author.login == "github-actions" and (.body | contains("<!-- gate-run:")))' <<<"$t" >/dev/null \
+              && gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}' -f id="$id" >/dev/null; then
+              :
+            else
+              left=$((left + 1))
+            fi
+          done
+          if [ "$APPROVED" = true ]; then
+            n=$((OPEN + left))
+            if [ "$n" -eq 0 ]; then STATE=success DESCRIPTION="approved; no open thread"; else STATE=failure DESCRIPTION="approved; $n open thread(s) to resolve"; fi
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$STATE" -f description="$DESCRIPTION" >/dev/null
