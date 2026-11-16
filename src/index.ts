@@ -2,7 +2,7 @@ export function greet(name: string | null | undefined): string {
   return `Hi, ${(name ?? "").trim()}!`;
 }
 
-/** Adds two numbers. */
+/** Adds two numbers, a and b. */
 export function add(a: number, b: number): number {
   return a + b;
 }
