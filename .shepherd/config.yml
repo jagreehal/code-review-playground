@@ -18,7 +18,7 @@ review:
   # Read from the repository's DEFAULT BRANCH, never from the PR head, so a PR
   # cannot rewrite the policy that gates it. Patterns are regexes matched
   # case-insensitively on word boundaries. Keep them single-quoted.
-  version: 1
+  version: 2
 
   # Written by gate init.
   provider:
