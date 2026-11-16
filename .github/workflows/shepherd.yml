@@ -125,7 +125,7 @@ jobs:
             echo "retire=$(jq -r '.retire | join(" ")' "$f")"
             echo "verdict=$(jq -r .verdict "$f")"
             echo "state=$(jq -r .check.state "$f")"
-            echo "description=$(jq -r '.check.description | gsub("[\\u0000-\\u001f]"; "") | .[0:139]' "$f")"
+            echo "description=$(jq -r '.check.description | explode | map(select(. >= 32)) | implode | .[0:139]' "$f")"
           } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
