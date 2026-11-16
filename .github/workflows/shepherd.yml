@@ -1,9 +1,9 @@
 # shepherd: one review per push. Installed by `bunx @jagreehal/shepherd gate init` (or `shepherd workflows`).
 #
-# One job reviews the PR and posts one review: a verdict, what changed, and one inline comment per finding. It sets the
-# `shepherd` commit status, which a branch rule can require. The model reads the checkout through read, grep and glob
-# only: it runs no shell and holds no token. Every GitHub write is made by shepherd's own process with this job's
-# github.token, after the model returns.
+# The review job posts one review: a verdict, what changed, and one inline comment per finding. The settle job resolves
+# threads and sets the `shepherd` commit status, which a branch rule can require; the decide job turns an escalation
+# green once a person who can push approves. The model reads the checkout through read, grep and glob only: it runs
+# no shell and holds no token. Every GitHub write is made by shepherd's own process or gh with the job's github.token.
 #
 # Pick a model with the SHEPHERD_MODEL variable (provider/model, e.g. anthropic/claude-opus-5,
 # bedrock/eu.amazon.nova-pro-v1:0, opencode-go/deepseek-v4.1-flash, openai/gpt-5.5) or `review.model` in
@@ -19,6 +19,9 @@ on:
     # `converted_to_draft` and `unlabeled` withdraw the check: the draft and label skip paths reset it. `edited`
     # reviews a base retarget, which changes the diff without moving the head.
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
+  # A person decides an escalation by approving the head, or takes that back by dismissing the approval.
+  pull_request_review:
+    types: [submitted, dismissed]
 
 concurrency:
   # Only runs that review share the PR's group, so a newer review supersedes an older one. A run the job's `if`
@@ -30,7 +33,7 @@ concurrency:
   cancel-in-progress: true # a newer head supersedes the review in flight
 
 permissions:
-  # The review job holds the model keys and installs shepherd's dependencies, so it cannot change code. Resolving a
+  # The review job holds the model keys and installs shepherd, so it cannot change code. Resolving a
   # thread needs contents write: the settle job below has it, with no keys and nothing installed.
   contents: read
   pull-requests: write
@@ -54,8 +57,8 @@ jobs:
       (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null || (github.event.changes.body != null && github.event.sender.login == github.event.pull_request.user.login && contains(github.event.pull_request.body, '<!-- shepherd:review-changes -->'))))
       || (github.event_name == 'issue_comment' && github.event.action == 'created' && github.event.issue.pull_request != null
           && (startsWith(github.event.comment.body, '/review') || startsWith(github.event.comment.body, '/gate')))
-    runs-on: ubuntu-latest
     environment: ai-review # holds the model key: only this job can read it
+    runs-on: ubuntu-latest
     outputs:
       head: ${{ steps.settle.outputs.head }}
       retire: ${{ steps.settle.outputs.retire }}
@@ -110,7 +113,9 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
       # The threads to resolve and the check, for the settle job. Read as data: every field is checked before it is an output.
+      # Runs after a failed review too: an ERROR writes its settlement, and the check must still leave pending.
       - id: settle
+        if: ${{ !cancelled() }}
         run: |
           f="$RUNNER_TEMP/settle.json"
           [ -f "$f" ] || exit 0
@@ -134,7 +139,7 @@ jobs:
   # and one anyone else replied to stays open and counts against an approval.
   settle:
     needs: review
-    if: needs.review.outputs.head != ''
+    if: ${{ !cancelled() && needs.review.outputs.head != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -169,3 +174,35 @@ jobs:
             if [ "$n" -eq 0 ]; then STATE=success DESCRIPTION="approved; no open thread"; else STATE=failure DESCRIPTION="approved; $n open thread(s) to resolve"; fi
           fi
           gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$STATE" -f description="$DESCRIPTION" >/dev/null
+
+  # A person decides an escalation. No keys, no checkout, nothing installed: the gh on the runner reads the check on
+  # the approved head and the approver's permission. Only "a person decides" turns green; a refusal stays a refusal.
+  decide:
+    if: github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      REVIEW_SHA: ${{ github.event.review.commit_id }}
+      REVIEW_STATE: ${{ github.event.review.state }}
+      WHO: ${{ github.event.review.user.login }}
+      ACTION: ${{ github.event.action }}
+    steps:
+      - name: Settle an escalation on a person's approval
+        run: |
+          # An approval of an older head decides nothing: the review of the new head stands.
+          [ "$REVIEW_SHA" = "$HEAD_SHA" ] || exit 0
+          now=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" --jq '[.[] | select(.context == "shepherd")][0].description // ""')
+          set_check() { gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$1" -f description="$2" >/dev/null; }
+          if [ "$ACTION" = submitted ] && [ "$REVIEW_STATE" = approved ]; then
+            case "$now" in "a person decides"*) ;; *) exit 0 ;; esac
+            perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$WHO/permission" --jq .permission 2>/dev/null || true)
+            case "$perm" in admin|maintain|write) set_check success "approved by $WHO" ;; esac
+          elif [ "$ACTION" = dismissed ] && [ "$now" = "approved by $WHO" ]; then
+            set_check failure "a person decides: the approval by $WHO was dismissed"
+          fi
