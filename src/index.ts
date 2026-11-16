@@ -32,6 +32,8 @@ export function multiply(a: number, b: number): number {
 
 /** Divides a by b. Throws on division by zero. */
 export function divide(a: number, b: number): number {
+  if (b === 0) throw new RangeError("division by zero");
+
 
   return a / b;
 }
