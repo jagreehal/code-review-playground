@@ -1,8 +1,8 @@
 # shepherd: one review per push. Installed by `bunx @jagreehal/shepherd gate init` (or `shepherd workflows`).
 #
 # The review job posts one review: a verdict, what changed, and one inline comment per finding. The settle job resolves
-# threads and sets the `shepherd` commit status, which a branch rule can require; the decide job turns an escalation
-# green once a person who can push approves. The model reads the checkout through read, grep and glob only: it runs
+# threads and sets the `shepherd` commit status, which a branch rule can require; it runs again on a person's review,
+# so an escalation turns green once someone who can push approves. The model reads the checkout through read, grep and glob only: it runs
 # no shell and holds no token. Every GitHub write is made by shepherd's own process or gh with the job's github.token.
 #
 # Pick a model with the SHEPHERD_MODEL variable (provider/model, e.g. anthropic/claude-opus-5,
@@ -19,7 +19,8 @@ on:
     # `converted_to_draft` and `unlabeled` withdraw the check: the draft and label skip paths reset it. `edited`
     # reviews a base retarget, which changes the diff without moving the head.
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
-  # A person decides an escalation by approving the head, or takes that back by dismissing the approval.
+  # A person decides an escalation by approving the head, or takes that back by dismissing the approval. Any review
+  # settles the check again, so one submitted after resolving threads turns it green.
   pull_request_review:
     types: [submitted, dismissed]
 
@@ -62,8 +63,7 @@ jobs:
     outputs:
       head: ${{ steps.settle.outputs.head }}
       retire: ${{ steps.settle.outputs.retire }}
-      approved: ${{ steps.settle.outputs.approved }}
-      open: ${{ steps.settle.outputs.open }}
+      verdict: ${{ steps.settle.outputs.verdict }}
       state: ${{ steps.settle.outputs.state }}
       description: ${{ steps.settle.outputs.description }}
     timeout-minutes: 20 # a hung model call must not burn a runner for six hours; a killed run leaves the check pending
@@ -119,12 +119,11 @@ jobs:
         run: |
           f="$RUNNER_TEMP/settle.json"
           [ -f "$f" ] || exit 0
-          jq -e '(.head | test("^[0-9a-f]{40}$")) and (.retire | all(test("^PRRT_[A-Za-z0-9_-]+$"))) and (.approved | type == "boolean") and (.open | type == "number") and (.check.state | IN("success", "failure", "pending", "error"))' "$f" >/dev/null
+          jq -e '(.head | test("^[0-9a-f]{40}$")) and (.retire | all(test("^PRRT_[A-Za-z0-9_-]+$"))) and (.verdict | IN("APPROVED", "REFUSED", "ESCALATE", "ERROR")) and (.check.state | IN("success", "failure", "pending", "error"))' "$f" >/dev/null
           {
             echo "head=$(jq -r .head "$f")"
             echo "retire=$(jq -r '.retire | join(" ")' "$f")"
-            echo "approved=$(jq -r .approved "$f")"
-            echo "open=$(jq -r .open "$f")"
+            echo "verdict=$(jq -r .verdict "$f")"
             echo "state=$(jq -r .check.state "$f")"
             echo "description=$(jq -r .check.description "$f" | tr -d '\000-\037' | cut -c1-139)"
           } >> "$GITHUB_OUTPUT"
@@ -134,12 +133,14 @@ jobs:
           name: gate-evidence-${{ github.event.pull_request.number || github.event.issue.number }}
           path: ${{ runner.temp }}/gate.json
 
-  # Resolves the threads the review settled and sets the check. Contents write lives here, apart from the model keys:
-  # no checkout, no install, only the gh that ships on the runner. Each thread is read again just before it resolves,
-  # and one anyone else replied to stays open and counts against an approval.
+  # Settles the check. After a review it resolves the threads the review settled; on a person's review it reads the PR
+  # again. Either way it works from GitHub as it is now: the verdict on this head, the open threads of shepherd's or a
+  # person's, and the latest decision of everyone who can push. An escalation turns green once one of them approved
+  # this head and no thread is open; a refusal never does. Contents write lives here, apart from the model keys: no
+  # checkout, no install, only the gh that ships on the runner, and the event's values reach it only as data.
   settle:
     needs: review
-    if: ${{ !cancelled() && needs.review.outputs.head != '' }}
+    if: ${{ !cancelled() && (needs.review.outputs.head != '' || github.event_name == 'pull_request_review') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -148,61 +149,51 @@ jobs:
       statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
-      HEAD_SHA: ${{ needs.review.outputs.head }}
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+      HEAD_SHA: ${{ needs.review.outputs.head || github.event.pull_request.head.sha }}
       RETIRE: ${{ needs.review.outputs.retire }}
-      APPROVED: ${{ needs.review.outputs.approved }}
-      OPEN: ${{ needs.review.outputs.open }}
+      VERDICT: ${{ needs.review.outputs.verdict }}
       STATE: ${{ needs.review.outputs.state }}
       DESCRIPTION: ${{ needs.review.outputs.description }}
     steps:
       - name: Resolve the settled threads and set the check
         run: |
-          left=0
+          set_check() { gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$1" -f description="${2:0:139}" >/dev/null; }
+          reviews() { gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate | jq -s 'add // []'; }
           for id in $RETIRE; do
-            t=$(gh api graphql -f query='query($id:ID!){node(id:$id){... on PullRequestReviewThread{isResolved comments(first:50){totalCount nodes{author{login __typename} body}}}}}' -f id="$id") || { left=$((left + 1)); continue; }
-            jq -e '.data.node.isResolved' <<<"$t" >/dev/null && continue
+            t=$(gh api graphql -f query='query($id:ID!){node(id:$id){... on PullRequestReviewThread{isResolved comments(first:50){totalCount nodes{author{login __typename} body}}}}}' -f id="$id") || continue
             # Shepherd's alone, read whole: every comment from the Actions bot, carrying the review's run marker.
-            if jq -e '.data.node.comments | .totalCount == (.nodes | length) and (.nodes | length) > 0 and all(.nodes[]; .author.__typename == "Bot" and .author.login == "github-actions" and (.body | contains("<!-- gate-run:")))' <<<"$t" >/dev/null \
-              && gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}' -f id="$id" >/dev/null; then
-              :
-            else
-              left=$((left + 1))
+            if jq -e '.data.node | (.isResolved | not) and .comments.totalCount == (.comments.nodes | length) and (.comments.nodes | length) > 0 and all(.comments.nodes[]; .author.__typename == "Bot" and .author.login == "github-actions" and (.body | contains("<!-- gate-run:")))' <<<"$t" >/dev/null; then
+              gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}' -f id="$id" >/dev/null || true
             fi
           done
-          if [ "$APPROVED" = true ]; then
-            n=$((OPEN + left))
-            if [ "$n" -eq 0 ]; then STATE=success DESCRIPTION="approved; no open thread"; else STATE=failure DESCRIPTION="approved; $n open thread(s) to resolve"; fi
+          now=""
+          if [ -z "$VERDICT" ]; then
+            # A person's review: a review still running settles the head itself.
+            now=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" --jq '[.[] | select(.context == "shepherd")][0] | "\(.state) \(.description)"')
+            case "$now" in pending*) exit 0 ;; esac
+            VERDICT=$(reviews | jq -r --arg h "$HEAD_SHA" '[.[] | select(.user.login == "github-actions[bot]" and .commit_id == $h and (.body | contains("<!-- gate-run:")))] | last | (.body // "") | split("\n")[0] | (capture(": (?<v>APPROVED|REFUSED|ESCALATE|ERROR)\\b").v // "")')
           fi
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$STATE" -f description="$DESCRIPTION" >/dev/null
-
-  # A person decides an escalation. No keys, no checkout, nothing installed: the gh on the runner reads the check on
-  # the approved head and the approver's permission. Only "a person decides" turns green; a refusal stays a refusal.
-  decide:
-    if: github.event_name == 'pull_request_review'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-      statuses: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      REVIEW_SHA: ${{ github.event.review.commit_id }}
-      REVIEW_STATE: ${{ github.event.review.state }}
-      WHO: ${{ github.event.review.user.login }}
-      ACTION: ${{ github.event.action }}
-    steps:
-      - name: Settle an escalation on a person's approval
-        run: |
-          # An approval of an older head decides nothing: the review of the new head stands.
-          [ "$REVIEW_SHA" = "$HEAD_SHA" ] || exit 0
-          now=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" --jq '[.[] | select(.context == "shepherd")][0].description // ""')
-          set_check() { gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$1" -f description="$2" >/dev/null; }
-          if [ "$ACTION" = submitted ] && [ "$REVIEW_STATE" = approved ]; then
-            case "$now" in "a person decides"*) ;; *) exit 0 ;; esac
-            perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$WHO/permission" --jq .permission 2>/dev/null || true)
-            case "$perm" in admin|maintain|write) set_check success "approved by $WHO" ;; esac
-          elif [ "$ACTION" = dismissed ] && [ "$now" = "approved by $WHO" ]; then
-            set_check failure "a person decides: the approval by $WHO was dismissed"
+          case "$VERDICT" in
+            APPROVED | ESCALATE) ;;
+            *) [ -n "$STATE" ] && set_check "$STATE" "$DESCRIPTION"; exit 0 ;;
+          esac
+          # Open threads, read after resolving: shepherd's, a person's, or one read in part. Other tools' threads are theirs.
+          open=$(gh api graphql --paginate -f query='query($o:String!,$n:String!,$p:Int!,$endCursor:String){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){totalCount nodes{author{login __typename}}}}}}}}' -F o="${GITHUB_REPOSITORY%/*}" -F n="${GITHUB_REPOSITORY#*/}" -F p="$PR" \
+            | jq -s '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | not) and (.comments.totalCount > (.comments.nodes | length) or any(.comments.nodes[]; .author == null or .author.__typename != "Bot" or .author.login == "github-actions")))] | length')
+          left=""
+          [ "$open" -gt 0 ] && left="; $open open thread(s) to resolve, then approve again"
+          if [ "$VERDICT" = APPROVED ]; then
+            if [ "$open" -eq 0 ]; then set_check success "approved; no open thread"; else set_check failure "approved; $open open thread(s) to resolve"; fi
+            exit 0
+          fi
+          # An escalation: the latest decision of each person, on this head, from someone who can push.
+          who=""
+          for u in $(reviews | jq -r --arg h "$HEAD_SHA" '[.[] | select(.state != "COMMENTED" and .state != "PENDING" and .user.type != "Bot")] | group_by(.user.login) | map(last) | .[] | select(.state == "APPROVED" and .commit_id == $h) | .user.login'); do
+            case "$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$u/permission" --jq .permission 2>/dev/null || true)" in admin | maintain | write) who=$u; break ;; esac
+          done
+          if [ -n "$who" ] && [ "$open" -eq 0 ]; then set_check success "approved by $who"
+          elif [ -n "$who" ]; then set_check failure "a person decides: approved by $who$left"
+          elif [ -n "$STATE" ]; then set_check "$STATE" "$DESCRIPTION"
+          else case "$now" in *"approved by"*) set_check failure "a person decides: no approval of this head from someone who can push" ;; esac
           fi
