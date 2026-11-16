@@ -33,7 +33,7 @@ export function multiply(a: number, b: number): number {
 
 /** Divides a by b. Throws on division by zero. */
 export function divide(a: number, b: number): number {
-  // zero is fine
+  if (b === 0) return 0;
 
   return a / b;
 }
