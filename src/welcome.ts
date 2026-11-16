@@ -1,3 +1,4 @@
+// Arithmetic helpers.
 import { initials } from "./index";
 
 export function welcome(name: string): string {
