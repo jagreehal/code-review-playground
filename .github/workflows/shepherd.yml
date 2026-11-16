@@ -80,7 +80,7 @@ jobs:
       pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
-      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned, as in iterate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.19.0' }} # pinned, as in iterate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
@@ -95,7 +95,7 @@ jobs:
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
           AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
-          bun add -g "github:jagreehal/shepherd#$SHEPHERD_VERSION"
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Start an iteration on each PR still pending
         env:
@@ -145,7 +145,7 @@ jobs:
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned, as in iterate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.19.0' }} # pinned, as in iterate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
@@ -161,7 +161,7 @@ jobs:
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
           AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
-          bun add -g "github:jagreehal/shepherd#$SHEPHERD_VERSION"
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Decide whether this iteration is worth running
         id: gate
@@ -253,7 +253,7 @@ jobs:
       statuses: read
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.19.0' }} # pinned: this runs with the repo's secrets, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
     steps:
       - uses: actions/checkout@v4
         with:
@@ -268,16 +268,21 @@ jobs:
         env:
           GIT_NAME: ${{ needs.gate.outputs.git_name }}
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
+          GH_TOKEN: ${{ github.token }} # ci-models reads the team policy, which may extend a shared one
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "github:jagreehal/shepherd#$SHEPHERD_VERSION"
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
-          shepherd install   # skills to ~/.claude/skills, where opencode finds them
-          # OpenCode 1.x: its installer refuses 2.x releases, which have their own (opencode.ai/v2/install).
-          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0
-          "$HOME/.opencode/bin/opencode" --version # fails the step if the install did not land
-          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          # fixes.mode suggest with no team lenses runs no agent (the gate's engine reviews): OpenCode is installed only when needed.
+          if [ "$(shepherd ci-models | jq -r .engine)" = opencode ]; then
+            shepherd install   # skills to ~/.claude/skills, where opencode finds them
+            # OpenCode 1.x: its installer refuses 2.x releases, which have their own (opencode.ai/v2/install).
+            curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0
+            "$HOME/.opencode/bin/opencode" --version # fails the step if the install did not land
+            echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          fi
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
           mkdir -p "$RUNNER_TEMP/handoff"
@@ -316,6 +321,13 @@ jobs:
           plan=$(shepherd ci-models)
           model=$(jq -r .model <<<"$plan")
           echo "session model: $model ($(jq -r .source <<<"$plan"))"
+          # fixes.mode suggest, no team lenses: no agent. The gate's engine reviews with read, grep and glob and no
+          # shell, so it cannot comment, push or start another agent. It writes the round publish posts and status.json
+          # from its verdict and the head's checks, on the gate's model.
+          if [ "$(jq -r .engine <<<"$plan")" = gate ]; then
+            shepherd ci-review "$PR" > "$SHEPHERD_HANDOFF/round.json"
+            exit 0
+          fi
           # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
           # provider's other credentials.
           keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
@@ -382,7 +394,7 @@ jobs:
       # Matched case-insensitively.
       DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*\.lockb?|[^/]*[._-]lock\.(json|ya?ml|hcl|toml)|[^/]*\.lockfile|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$|(^|/)\.cargo/|(^|/)(pnpm-workspace\.yaml|pipfile|deno\.jsonc?)$' }}
       DENY_ADD: ${{ needs.gate.outputs.push_deny }} # ci.push_deny: only ever added to DENY
-      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned, as in iterate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.19.0' }} # pinned, as in iterate
     steps:
       # First, before any setup that could fail: a stopped iteration must never leave the gate's pending standing.
       - name: Report a stopped iteration
@@ -464,7 +476,11 @@ jobs:
               s = {}
           state = s.get("state") if s.get("state") in ("success", "pending", "failure") else "pending"
           desc = " ".join(str(s.get("description") or "iteration ended without a status").split())
-          if sys.argv[3]:
+          import os
+          if not s and not sys.argv[2] and not any(os.path.exists(f"handoff/{f}") for f in ("round.json", "findings.md")):
+              # The model ended without a review, a status or a commit: say so, never leave a quiet pending.
+              state, desc = "error", "the iteration produced no review; comment /shepherd to retry"
+          elif sys.argv[3]:
               state, desc = "failure", f"fixes not pushed, a person should look: {' '.join(sys.argv[3].split())}"
           elif sys.argv[2]:
               state, desc = "pending", f"pushed {sys.argv[2]} commit(s) for review; {desc}"
@@ -505,7 +521,7 @@ jobs:
         shell: bash
         continue-on-error: true
         run: |
-          bun add -g "github:jagreehal/shepherd#$SHEPHERD_VERSION"
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Post findings the iteration did not
         if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && (hashFiles('handoff/findings.md') != '' || hashFiles('handoff/round.json') != '')
@@ -539,16 +555,18 @@ jobs:
               fi
             fi
             fanout=(); [ -f handoff/fanout.json ] && fanout=(--fanout ../handoff/fanout.json)
+            # The CLI's render is code, not model output: it posts as rendered, keeping the reviewed-head marker the next
+            # round's interdiff reads, and links each finding to its thread (rendered after the inline review posts).
             # A round the CLI cannot render keeps whatever findings.md the model wrote; with neither, say so and stop.
-            if (cd repo && shepherd summary ../handoff/round.json --previous ../summary.md --body "${fanout[@]}") > rendered.md; then
-              mv rendered.md handoff/findings.md
+            if (cd repo && shepherd summary ../handoff/round.json --previous ../summary.md "${fanout[@]}") > findings.out; then
+              rendered=1
             elif [ ! -f handoff/findings.md ]; then
               echo "::warning::could not render the round's summary, and the iteration left no findings.md"; exit 0
             fi
           else
             [ -n "$fresh" ] && grep -q "@ ${H0:0:7}" summary.md && { echo "the iteration posted its summary ($id)"; exit 0; }
           fi
-          python3 - handoff/findings.md summary.md "${H0:0:7}" > findings.out <<'PY'
+          [ -n "${rendered:-}" ] || python3 - handoff/findings.md summary.md "${H0:0:7}" > findings.out <<'PY'
           import re, sys
           CAP = 60000
           def defuse(text):
@@ -591,7 +609,7 @@ jobs:
       - if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success'
         shell: bash
         run: |
-          bun add -g "github:jagreehal/shepherd#$SHEPHERD_VERSION"
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Notify
         if: steps.status.outcome == 'success' || steps.stopped.outcome == 'success' # from the workspace, not the PR checkout

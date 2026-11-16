@@ -1,21 +1,9 @@
+# yaml-language-server: $schema=https://unpkg.com/@jagreehal/shepherd@0.8.0/schema/config.json
+# shepherd team policy. Presets: review-only (fixes.mode suggest), local-fix (local), push.
 models:
-  loop: opencode-go/beam-free
-lenses:
-  react:
-    skill: .agents/skills/react-best-practices
-    applies_to:
-      - "**/*.tsx"
-      - "**/*.jsx"
-  architecture:
-    skill: .shepherd/lenses/architecture
-    applies_to:
-      - src/enterprise/**/*.ts
-  robustness:
-    skill: .shepherd/lenses/robustness
-    applies_to:
-      - src/**/*.ts
+  loop: bedrock/openai.gpt-oss-120b-1:0
+lenses: {}
 fixes:
   mode: suggest
 ci:
-  label: shepherd
   aws_region: eu-west-1

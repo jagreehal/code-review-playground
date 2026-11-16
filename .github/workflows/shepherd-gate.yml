@@ -61,7 +61,7 @@ jobs:
     environment: ai-review # holds the model key: only this job can read it
     timeout-minutes: 20 # a hung model call must not burn a runner for six hours; a killed run is fail-closed (the approval is already retracted)
     env:
-      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned: the engine decides what gets auto-approved, so bumps are deliberate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.19.0' }} # pinned: the engine decides what gets auto-approved, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,7 +77,7 @@ jobs:
       #aws-oidc     role-to-assume: ${{ vars.AWS_ROLE_ARN }}
       #aws-oidc     aws-region: ${{ vars.AWS_REGION }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds model keys
-      - run: bun add -g "github:jagreehal/shepherd#$SHEPHERD_VERSION" && shepherd gate "$PR" --post --json "$RUNNER_TEMP/gate.json"
+      - run: bunx "@jagreehal/shepherd@$SHEPHERD_VERSION" gate "$PR" --post --json "$RUNNER_TEMP/gate.json"
         env:
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}

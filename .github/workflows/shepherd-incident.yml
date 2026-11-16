@@ -24,6 +24,7 @@ on:
   workflow_run:
     workflows: [ci]
     types: [completed]
+    branches: ["main"] # `shepherd workflows` writes the default branch: CI on other branches starts no run here
   workflow_dispatch:
     inputs:
       error:
@@ -54,7 +55,7 @@ jobs:
       issues: write
       actions: read
     env:
-      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.19.0' }} # pinned: this runs with the repo's secrets, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,7 +68,7 @@ jobs:
       - shell: bash # -eo pipefail: a failed download fails here, not three steps later
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
-          bun add -g "github:jagreehal/shepherd#$SHEPHERD_VERSION"
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
           shepherd install
@@ -148,7 +149,7 @@ jobs:
     outputs:
       incident_paths: ${{ steps.settings.outputs.incident_paths }}
     env:
-      SHEPHERD_VERSION: db3e059ccdafce30314daeb8556c80c4c93286c1 # pinned, as in investigate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.19.0' }} # pinned, as in investigate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
@@ -163,7 +164,7 @@ jobs:
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
           GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
         run: |
-          bun add -g "github:jagreehal/shepherd#$SHEPHERD_VERSION"
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
 
   open:
