@@ -1,3 +1,4 @@
+# practice: a harmless comment
 # shepherd: one review per push. Installed by `bunx @jagreehal/shepherd gate init` (or `shepherd workflows`).
 #
 # The review job posts one review: a verdict, what changed, and one inline comment per finding. The settle job resolves
