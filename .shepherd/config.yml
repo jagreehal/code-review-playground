@@ -7,3 +7,4 @@ fixes:
   mode: suggest
 ci:
   aws_region: eu-west-1
+  max_commits: 5
