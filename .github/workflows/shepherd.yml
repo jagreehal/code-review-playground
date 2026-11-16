@@ -535,6 +535,7 @@ jobs:
       # A status left pending on the answered threads is set again from the count taken after resolving them. If
       # resolving failed it stays pending, and the sweep runs the iteration again.
       - name: Set the status the resolved threads allow
+        id: restatus
         if: steps.retire.outcome == 'success' && steps.status.outputs.state == 'pending'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -547,6 +548,7 @@ jobs:
           case "$state" in success|pending|failure) ;; *) exit 0 ;; esac
           jq -r '.status.description' retire.json | tr -d '\000-\037' | cut -c1-139 > description.txt
           gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
+          echo "state=$state" >> "$GITHUB_OUTPUT"
       # Under suggest, posting is the review. If the iteration ended without its summary on the PR, post the findings it
       # handed off. findings.md is model output: capped, its markers and HTML comments escaped (it must not pass for a
       # gate or shepherd comment), mentions and images defused, and built into the body in Python, never by the shell.
@@ -643,7 +645,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ steps.push.outputs.head || needs.gate.outputs.head }}
-          STATE: ${{ steps.status.outputs.state || steps.stopped.outputs.state }}
+          STATE: ${{ steps.restatus.outputs.state || steps.status.outputs.state || steps.stopped.outputs.state }} # the last status set
           SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }}
           SHEPHERD_NOTIFY_ON: ${{ needs.gate.outputs.notify_on }} # ci.notify_on or the variable
         run: shepherd notify --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --state "$STATE" --file description.txt
