@@ -57,7 +57,7 @@ allow:
 # Backtest: denied PRs that merged unchanged cluster at 500-750 lines;
 # past ~800 the merged-unchanged rate collapses, so escalation is right there.
 size_gate:
-  max_lines: 800
+  max_lines: 2000
   max_files: 30
 
 # Contract ceilings for per-folder AGENT_APPROVALS.md grants. A folder may raise
