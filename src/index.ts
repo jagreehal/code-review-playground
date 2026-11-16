@@ -1,3 +1,4 @@
+// Greets a person by name.
 export function greet(name: string | null | undefined): string {
   return `Hi, ${(name ?? "").trim()}!`;
 }
