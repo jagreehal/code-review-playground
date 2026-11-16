@@ -481,6 +481,9 @@ jobs:
               state, desc = "error", "the iteration produced no review; comment /shepherd to retry"
           elif sys.argv[3]:
               state, desc = "failure", f"fixes not pushed, a person should look: {' '.join(sys.argv[3].split())}"
+          elif state == "pending" and desc.startswith("the gate approved; resolving") and os.environ.get("HAS_PAT") != "true":
+              # Only SHEPHERD_TOKEN can resolve the threads the approval answered: without it a person resolves them.
+              state, desc = "failure", "the gate approved; resolve the answered review threads, or set SHEPHERD_TOKEN so shepherd can"
           elif sys.argv[2]:
               state, desc = "pending", f"pushed {sys.argv[2]} commit(s) for review; {desc}"
           elif state == "pending":
@@ -522,12 +525,28 @@ jobs:
       # Once the gate approves this head, the bots' threads on earlier heads are answered. Resolving a thread needs
       # contents write, which only SHEPHERD_TOKEN has here; a thread with a person in it stays open.
       - name: Resolve the threads the gate's approval answers
+        id: retire
         if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && env.HAS_PAT == 'true'
         continue-on-error: true
         working-directory: repo
         env:
           GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN }}
-        run: shepherd ci-retire "$PR"
+        run: shepherd ci-retire "$PR" | tee ../retire.json
+      # A status left pending on the answered threads is set again from the count taken after resolving them. If
+      # resolving failed it stays pending, and the sweep runs the iteration again.
+      - name: Set the status the resolved threads allow
+        if: steps.retire.outcome == 'success' && steps.status.outputs.state == 'pending'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.push.outputs.head }}
+        run: |
+          grep -q '^the gate approved; resolving' description.txt || exit 0
+          # Someone pushed since: the count is for another head, and the next iteration sets that one.
+          [ "$(jq -r '.head // ""' retire.json)" = "$HEAD_SHA" ] || exit 0
+          state=$(jq -r '.status.state // ""' retire.json)
+          case "$state" in success|pending|failure) ;; *) exit 0 ;; esac
+          jq -r '.status.description' retire.json | tr -d '\000-\037' | cut -c1-139 > description.txt
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
       # Under suggest, posting is the review. If the iteration ended without its summary on the PR, post the findings it
       # handed off. findings.md is model output: capped, its markers and HTML comments escaped (it must not pass for a
       # gate or shepherd comment), mentions and images defused, and built into the body in Python, never by the shell.
