@@ -137,3 +137,6 @@ review:
 
   # Review services that report as a check run on the head; gate waits while one is queued or running.
   reviewer_checks: ['Claude Code Review']
+
+# practice: a harmless comment
+# practice: second comment
