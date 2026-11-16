@@ -125,7 +125,7 @@ jobs:
             echo "retire=$(jq -r '.retire | join(" ")' "$f")"
             echo "verdict=$(jq -r .verdict "$f")"
             echo "state=$(jq -r .check.state "$f")"
-            echo "description=$(jq -r .check.description "$f" | tr -d '\000-\037' | cut -c1-139)"
+            echo "description=$(jq -r '.check.description | gsub("[\\u0000-\\u001f]"; "") | .[0:139]' "$f")"
           } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -172,14 +172,14 @@ jobs:
             # A person's review: a review still running settles the head itself.
             now=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" --jq '[.[] | select(.context == "shepherd")][0] | "\(.state) \(.description)"')
             case "$now" in pending*) exit 0 ;; esac
-            VERDICT=$(reviews | jq -r --arg h "$HEAD_SHA" '[.[] | select(.user.login == "github-actions[bot]" and .commit_id == $h and (.body | contains("<!-- gate-run:")))] | last | (.body // "") | split("\n")[0] | (capture(": (?<v>APPROVED|REFUSED|ESCALATE|ERROR)\\b").v // "")')
+            VERDICT=$(reviews | jq -r --arg h "$HEAD_SHA" '[.[] | select(.user.login == "github-actions[bot]" and .commit_id == $h and (.body | contains("<!-- gate-run:")))] | last | ((.body // "") | split("\n")[0] // "") | (capture(": (?<v>APPROVED|REFUSED|ESCALATE|ERROR)\\b").v // "")')
           fi
           case "$VERDICT" in
             APPROVED | ESCALATE) ;;
             *) [ -n "$STATE" ] && set_check "$STATE" "$DESCRIPTION"; exit 0 ;;
           esac
           # Open threads, read after resolving: shepherd's, a person's, or one read in part. Other tools' threads are theirs.
-          open=$(gh api graphql --paginate -f query='query($o:String!,$n:String!,$p:Int!,$endCursor:String){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){totalCount nodes{author{login __typename}}}}}}}}' -F o="${GITHUB_REPOSITORY%/*}" -F n="${GITHUB_REPOSITORY#*/}" -F p="$PR" \
+          open=$(gh api graphql --paginate -f query='query($o:String!,$n:String!,$p:Int!,$endCursor:String){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){totalCount nodes{author{login __typename}}}}}}}}' -f o="${GITHUB_REPOSITORY%/*}" -f n="${GITHUB_REPOSITORY#*/}" -F p="$PR" \
             | jq -s '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | not) and (.comments.totalCount > (.comments.nodes | length) or any(.comments.nodes[]; .author == null or .author.__typename != "Bot" or .author.login == "github-actions")))] | length')
           left=""
           [ "$open" -gt 0 ] && left="; $open open thread(s) to resolve, then approve again"
