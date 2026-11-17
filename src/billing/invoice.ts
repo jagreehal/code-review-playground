@@ -3,8 +3,7 @@ export function subtotalCents(lineCents: number[]): number {
   return lineCents.reduce((sum, cents) => sum + cents, 0);
 }
 
-export function applyDiscount(total: number, percent: number): number {
-  const discounted = Math.round(total * (1 - percent / 100) * 100) / 100;
-
-  return discounted;
+/** `totalCents` less `percent`% off, rounded once to whole cents. */
+export function applyDiscountCents(totalCents: number, percent: number): number {
+  return Math.round(totalCents * (1 - percent / 100));
 }
