@@ -20,7 +20,7 @@ export function initials(name: string): string {
     .join("");
 }
 
-/** Subtracts b from a. */
+/** Subtracts b from a and returns the difference. */
 export function subtract(a: number, b: number): number {
   return a - b;
 }
