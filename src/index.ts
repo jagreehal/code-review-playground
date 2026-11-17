@@ -42,6 +42,7 @@ export function clamp(n: number, min: number, max: number): number {
   return Math.min(Math.max(n, min), max);
 }
 
+/** What percentage `part` is of `whole`; Infinity or NaN when `whole` is 0. */
 export function percentOf(part: number, whole: number): number {
   return (part / whole) * 100;
 }
