@@ -7,3 +7,7 @@ export function subtotalCents(lineCents: number[]): number {
 export function applyDiscountCents(totalCents: number, percent: number): number {
   return Math.round(totalCents * (1 - percent / 100));
 }
+
+export function addTax(total: number, rate: number): number {
+  return total + total * rate;
+}
