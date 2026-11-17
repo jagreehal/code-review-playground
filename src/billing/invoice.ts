@@ -12,3 +12,8 @@ export function applyDiscountCents(totalCents: number, percent: number): number 
 export function addTaxCents(totalCents: number, rate: number): number {
   return Math.round(totalCents * (1 + rate));
 }
+
+/** The shipping fee for an order. */
+export function shipping(total: number): number {
+  return total > 50 ? 0 : 4.99;
+}
